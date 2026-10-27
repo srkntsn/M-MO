@@ -33,6 +33,9 @@ class _MimoHomeState extends State<MimoHome> {
   bool blinking = false;
   bool listening = false;
   bool talking = false;
+  bool autoListen = true;
+  bool processing = false;
+  Timer? relistenTimer;
   String face = 'normal';
   String response = 'Merhaba! Ben MİMO. Konuşmak için mikrofona dokun.';
   String heard = '';
@@ -42,7 +45,12 @@ class _MimoHomeState extends State<MimoHome> {
     super.initState();
     tts.setLanguage('tr-TR');
     tts.setSpeechRate(0.48);
-    tts.setCompletionHandler(() { if (mounted) setState(() => talking = false); });
+    tts.setCompletionHandler(() {
+      if (!mounted) return;
+      setState(() { talking = false; processing = false; });
+      scheduleListen();
+    });
+    Future.delayed(const Duration(seconds: 1), startListening);
     blinkTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
       if (!mounted || face == 'sleep') return;
       setState(() => blinking = true);
@@ -51,8 +59,69 @@ class _MimoHomeState extends State<MimoHome> {
     });
   }
 
+  void scheduleListen() {
+    relistenTimer?.cancel();
+    if (mounted && autoListen && !talking && !processing) {
+      relistenTimer = Timer(const Duration(milliseconds: 900), startListening);
+    }
+  }
+
+  Future<void> startListening() async {
+    if (!mounted || !autoListen || talking || listening || processing) return;
+    try {
+      final available = await speech.initialize(
+        onError: (e) {
+          if (!mounted) return;
+          setState(() => listening = false);
+          if (e.permanent) {
+            setState(() { autoListen = false; response = 'Mikrofon iznini veya ses tanıma hizmetini kontrol et.'; });
+          } else { scheduleListen(); }
+        },
+        onStatus: (status) {
+          if (!mounted) return;
+          if (status == 'notListening' || status == 'done') {
+            setState(() => listening = false);
+            if (!processing && heard.trim().isNotEmpty) {
+              final message = heard;
+              heard = '';
+              reply(message);
+            } else { scheduleListen(); }
+          }
+        },
+      );
+      if (!available || !mounted) return;
+      heard = '';
+      await speech.listen(
+        localeId: 'tr_TR',
+        listenFor: const Duration(seconds: 25),
+        pauseFor: const Duration(seconds: 3),
+        onResult: (r) {
+          if (!mounted || processing) return;
+          heard = r.recognizedWords;
+          setState(() => response = 'Duyduğum: ${r.recognizedWords}');
+          if (r.finalResult && heard.trim().isNotEmpty) {
+            final message = heard;
+            heard = '';
+            reply(message);
+          }
+        },
+      );
+      if (mounted) setState(() => listening = speech.isListening);
+    } catch (_) { scheduleListen(); }
+  }
+
+  String moodFor(String text) {
+    final q = text.toLowerCase();
+    if (RegExp(r'üzgün|mutsuz|ağlı|kötüyüm|canım sıkkın').hasMatch(q)) return 'sad';
+    if (RegExp(r'mutlu|harika|süper|sevindim|teşekkür|güzel').hasMatch(q)) return 'happy';
+    if (RegExp(r'şaşır|inanamıyorum|vay be').hasMatch(q)) return 'surprised';
+    return 'normal';
+  }
+
   Future<void> speak(String answer) async {
+    if (speech.isListening) await speech.stop();
     await tts.stop();
+    if (!mounted) return;
     setState(() { response = answer; talking = true; });
     await tts.speak(answer);
   }
@@ -74,46 +143,29 @@ class _MimoHomeState extends State<MimoHome> {
   }
 
   Future<void> reply(String message) async {
-    if (message.trim().isEmpty) return;
+    if (message.trim().isEmpty || processing) return;
+    processing = true;
+    setState(() => face = moodFor(message));
     input.clear();
     FocusManager.instance.primaryFocus?.unfocus();
     await speak(answerFor(message));
   }
 
   Future<void> toggleMic() async {
-    if (listening) {
+    setState(() => autoListen = !autoListen);
+    if (autoListen) {
+      scheduleListen();
+    } else {
+      relistenTimer?.cancel();
       await speech.stop();
       if (mounted) setState(() => listening = false);
-      if (heard.trim().isNotEmpty) await reply(heard);
-      return;
     }
-    final available = await speech.initialize(
-      onError: (error) { if (mounted) setState(() { listening = false; response = 'Mikrofon kullanılamıyor: ${error.errorMsg}'; }); },
-      onStatus: (status) { if (mounted && status == 'notListening') setState(() => listening = false); },
-    );
-    if (!available) {
-      await speak('Ses tanıma kullanılamıyor. Telefonda konuşma tanıma hizmetini kontrol et.');
-      return;
-    }
-    heard = '';
-    setState(() => listening = true);
-    await speech.listen(
-      localeId: 'tr_TR',
-      onResult: (r) {
-        heard = r.recognizedWords;
-        if (mounted) setState(() => response = 'Duyduğum: ${r.recognizedWords}');
-        if (r.finalResult) {
-          speech.stop();
-          if (mounted) setState(() => listening = false);
-          reply(heard);
-        }
-      },
-    );
   }
 
   @override
   void dispose() {
     blinkTimer?.cancel();
+    relistenTimer?.cancel();
     speech.stop();
     tts.stop();
     input.dispose();
@@ -122,7 +174,7 @@ class _MimoHomeState extends State<MimoHome> {
 
   @override
   Widget build(BuildContext context) {
-    final eyeHeight = blinking || face == 'sleep' ? 9.0 : face == 'happy' ? 26.0 : 65.0;
+    final eyeHeight = blinking || face == 'sleep' ? 9.0 : face == 'happy' ? 26.0 : face == 'sad' ? 45.0 : face == 'surprised' ? 75.0 : 65.0;
     return Scaffold(
       appBar: AppBar(title: const Text('MİMO AI'), centerTitle: true, backgroundColor: Colors.transparent),
       body: SafeArea(
@@ -147,7 +199,7 @@ class _MimoHomeState extends State<MimoHome> {
                       eye(eyeHeight), const SizedBox(width: 28), eye(eyeHeight),
                     ]),
                     const SizedBox(height: 18),
-                    Text(face == 'happy' ? 'ᴗ' : face == 'sleep' ? '—' : talking ? '◯' : '⌣',
+                    Text(face == 'happy' ? 'ᴗ' : face == 'sleep' ? '—' : face == 'sad' ? '︵' : face == 'surprised' ? '○' : talking ? '◯' : '⌣',
                       style: const TextStyle(fontSize: 40, color: Color(0xFF72DEFF))),
                   ],
                 ),
@@ -155,16 +207,12 @@ class _MimoHomeState extends State<MimoHome> {
               const SizedBox(height: 24),
               Text(response, textAlign: TextAlign.center, style: const TextStyle(fontSize: 17)),
               const SizedBox(height: 18),
-              Wrap(spacing: 9, children: [
-                OutlinedButton(onPressed: () => setState(() => face = 'normal'), child: const Text('Normal')),
-                OutlinedButton(onPressed: () => setState(() => face = 'happy'), child: const Text('Mutlu')),
-                OutlinedButton(onPressed: () => setState(() => face = 'sleep'), child: const Text('Uykulu')),
-              ]),
+              Text(autoListen ? (listening ? 'Dinliyorum…' : talking ? 'Konuşuyorum…' : 'Otomatik dinleme açık') : 'Dinleme kapalı'),
               const Spacer(),
               FilledButton.icon(
                 onPressed: toggleMic,
-                icon: Icon(listening ? Icons.stop : Icons.mic),
-                label: Text(listening ? 'Dinlemeyi bitir' : 'Benimle konuş'),
+                icon: Icon(autoListen ? Icons.mic : Icons.mic_off),
+                label: Text(autoListen ? 'Dinlemeyi kapat' : 'Dinlemeyi aç'),
               ),
               const SizedBox(height: 14),
               Row(children: [
