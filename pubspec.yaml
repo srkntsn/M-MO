@@ -1,0 +1,13 @@
+name: mimo_ai
+description: MIMO AI - Turkce sanal robot arkadas
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  speech_to_text: ^7.4.0
+  flutter_tts: ^4.2.5
+flutter:
+  uses-material-design: true
