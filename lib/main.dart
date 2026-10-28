@@ -323,13 +323,35 @@ class _MimoHomeState extends State<MimoHome> {
   }
 
   Widget eye(double height) => AnimatedContainer(
-    duration: const Duration(milliseconds: 180),
+    duration: const Duration(milliseconds: 220),
     curve: Curves.easeInOut,
-    width: 78, height: height,
+    width: 78,
+    height: height,
+    clipBehavior: Clip.antiAlias,
     decoration: BoxDecoration(
-      color: const Color(0xFF6CDCFF),
-      borderRadius: BorderRadius.circular(36),
-      boxShadow: const [BoxShadow(color: Color(0x5551CFFF), blurRadius: 18)],
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft, end: Alignment.bottomRight,
+        colors: [Color(0xFFB4F7FF), Color(0xFF57CCFB), Color(0xFF189FD9)],
+      ),
+      borderRadius: BorderRadius.circular(38),
+      boxShadow: const [BoxShadow(color: Color(0x8851CFFF), blurRadius: 19, spreadRadius: 3)],
     ),
+    child: height > 25 ? Center(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        width: face == 'surprised' ? 25 : 20,
+        height: face == 'surprised' ? 30 : 27,
+        decoration: BoxDecoration(
+          color: const Color(0xFF153958),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Container(margin: const EdgeInsets.only(left: 4, top: 5),
+            width: 6, height: 6,
+            decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
+        ),
+      ),
+    ) : null,
   );
 }
