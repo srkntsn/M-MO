@@ -1,0 +1,16 @@
+.dart_tool/
+.flutter-plugins*
+build/
+android/
+ios/
+linux/
+macos/
+windows/
+web/
+*.iml
+*.keystore
+*.jks
+.env*
+.dev.vars*
+.wrangler/
+__pycache__/

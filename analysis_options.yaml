@@ -1,0 +1,4 @@
+# Correctness diagnostics stay enabled; formatting is handled by dart format.
+analyzer:
+  exclude:
+    - build/**

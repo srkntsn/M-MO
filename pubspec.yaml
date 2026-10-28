@@ -1,7 +1,7 @@
 name: mimo_ai
-description: MIMO AI - Turkce sanal robot arkadas
+description: MIMO - sesli, kamerali, 3D sanal arkadas
 publish_to: none
-version: 0.3.0+3
+version: 0.4.0+4
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:
@@ -10,5 +10,12 @@ dependencies:
   speech_to_text: ^7.4.0
   flutter_tts: ^4.2.5
   shared_preferences: ^2.3.2
+  package_info_plus: ^8.3.1
+  camera: ^0.11.2
+  url_launcher: ^6.3.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
 flutter:
   uses-material-design: true

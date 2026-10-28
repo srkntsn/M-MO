@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "mimo-ai-server",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-29",
+  "keep_vars": true
+}
