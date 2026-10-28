@@ -12,3 +12,8 @@ addition = '''<manifest xmlns:android="http://schemas.android.com/apk/res/androi
     </queries>'''
 assert needle in s
 p.write_text(s.replace(needle, addition, 1))
+
+# flutter create adds a counter-app test for MyApp, which this application replaces.
+generated_test = Path('test/widget_test.dart')
+if generated_test.exists() and 'MyApp' in generated_test.read_text():
+    generated_test.unlink()

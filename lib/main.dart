@@ -182,10 +182,10 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     try {
       display(FaceMode.listening);
       await speech.listen(
-        localeId: 'tr_TR',
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 2),
         listenOptions: stt.SpeechListenOptions(
+          localeId: 'tr_TR',
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 2),
           partialResults: true,
           cancelOnError: false,
           listenMode: stt.ListenMode.dictation,
