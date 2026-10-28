@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -26,6 +28,36 @@ class MimoHome extends StatefulWidget {
 }
 
 class _MimoHomeState extends State<MimoHome> {
+  // Point this to a trusted HTTPS proxy, never put a Gemini key in the APK.
+  static const aiEndpoint = String.fromEnvironment('MIMO_API_URL', defaultValue: '');
+  final List<Map<String, String>> conversation = [];
+
+  Future<String> aiAnswer(String message) async {
+    if (aiEndpoint.isEmpty) {
+      return 'Gerçek yapay zekâ bağlantısı henüz yapılandırılmadı. Mikrofonum çalışıyor, ama sorulara cevap verebilmem için güvenli sunucu bağlantısı gerekiyor.';
+    }
+    final uri = Uri.tryParse(aiEndpoint);
+    if (uri == null || uri.scheme != 'https') return 'Yapay zekâ bağlantı adresi güvenli değil.';
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
+    try {
+      final request = await client.postUrl(uri).timeout(const Duration(seconds: 15));
+      request.headers.contentType = ContentType.json;
+      request.add(utf8.encode(jsonEncode({'message': message, 'history': conversation.take(12).toList()})));
+      final res = await request.close().timeout(const Duration(seconds: 30));
+      final body = await utf8.decoder.bind(res).join().timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return 'Yapay zekâ servisi şu anda cevap veremiyor. Biraz sonra yeniden deneyebilirsin.';
+      final json = jsonDecode(body);
+      final answer = json is Map ? json['reply'] : null;
+      if (answer is! String || answer.trim().isEmpty) return 'Yapay zekâdan geçerli bir yanıt alamadım.';
+      conversation.add({'role':'user','text':message});
+      conversation.add({'role':'assistant','text':answer});
+      if (conversation.length > 12) conversation.removeRange(0, conversation.length - 12);
+      return answer;
+    } catch (_) {
+      return 'İnternet veya yapay zekâ bağlantısında sorun var. Bağlantını kontrol edebilir misin?';
+    } finally { client.close(force: true); }
+  }
+
   final stt.SpeechToText speech = stt.SpeechToText();
   final FlutterTts tts = FlutterTts();
   final TextEditingController input = TextEditingController();
@@ -148,7 +180,8 @@ class _MimoHomeState extends State<MimoHome> {
     setState(() => face = moodFor(message));
     input.clear();
     FocusManager.instance.primaryFocus?.unfocus();
-    await speak(answerFor(message));
+    final answer = await aiAnswer(message);
+    if (mounted) await speak(answer);
   }
 
   Future<void> toggleMic() async {
@@ -224,7 +257,7 @@ class _MimoHomeState extends State<MimoHome> {
                 IconButton(onPressed: () => reply(input.text), icon: const Icon(Icons.send)),
               ]),
               const SizedBox(height: 10),
-              const Text('İlk sürüm: hazır yanıtlar • Bulut yapay zekâ henüz bağlı değil',
+              Text(aiEndpoint.isEmpty ? 'Yapay zekâ sunucusu bağlı değil' : 'Yapay zekâ bağlantısı yapılandırıldı',
                 textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: Colors.white54)),
             ],
           ),
