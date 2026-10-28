@@ -28,7 +28,15 @@ export default {
         generationConfig:{maxOutputTokens:320,temperature:0.75}
       })
     });
-    if(!ai.ok) return Response.json({error:'AI unavailable'}, {status:503});
+    if(!ai.ok) {
+      let reason = 'unknown';
+      try {
+        const failed = await ai.json();
+        reason = String(failed.error?.status || failed.error?.code || 'unknown');
+      } catch (_) {}
+      console.error('Gemini upstream failure', {status: ai.status, reason, model});
+      return Response.json({error:'AI unavailable', upstream_status:ai.status, reason}, {status:503});
+    }
     const result=await ai.json();
     const reply=(result.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').trim();
     return Response.json({reply:reply||'Şu anda yanıt oluşturamadım.'});
