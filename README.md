@@ -1,10 +1,50 @@
-# MİMO AI
+# MİMO · 0.4
 
-Android için Türkçe konuşan, hareketli gözlere sahip sanal arkadaş robot.
+Türkçe sesli sanal arkadaş. Normal ekranda yalnızca perspektifle çizilen, ışıklandırılmış bir 3D robot yüzü görünür. Model ve animasyonlar cihazda çalışır; dışarıdan 3D dosya indirmez.
 
-İlk sürüm: göz kırpma, mimikler, yazılı sohbet, mikrofonla Türkçe ses algılama ve telefondan Türkçe sesli yanıt. Yanıtlar başlangıçta yerel örnek kurallarla üretilir; bulut yapay zekâ henüz eklenmedi.
+## Kullanım
 
-## APK oluşturma
-GitHub > Actions > MIMO Android APK > Run workflow. Derleme tamamlanınca `mimo-ai-debug-apk` dosyasını indir; ZIP'in içindeki `app-debug.apk` dosyasını Android telefonuna kur.
+- Konuş: MİMO dinler, Gemini yanıtını seslendirir ve tekrar dinlemeye geçer.
+- Yüzüne dokun: konuşmasını/isteğini kes ve yeniden dinle; uykudan uyandır.
+- Yüzüne uzun bas: bağlantı ayarları. Önceki sürümün `endpoint`, `access`, `voice` ayarları aynı imzalı güncellemede korunur.
+- “Uyu” / “dinlemeyi kapat”: dinlemeyi durdur. Dokunarak uyandır.
+- “Kameraya bak”, “buna bak”, “bunu oku”: arka kamerayı nesneye çevir. Sesli bilgilendirmeden sonra tek kare gönderilir; kamera kapatılır, geçici fotoğraf silinir.
+- “Geçmişi unut”: cihazda saklanan son 6 konuşmayı sil. Görüntüler geçmişte saklanmaz.
+- “Güncelleme var mı?”: yeni APK kontrolü. “Yeni sürümü aç”: indirme sayfası.
 
-Bu bir **debug/test APK**'sıdır, Play Store yayını için değildir.
+Mikrofon/kamera yalnızca uygulama ön plandayken kullanılır. Android’in izin pencereleri ilk kullanımda görünür. Dinleme ile seslendirme sırayla çalışır: bu sürüm tam çift yönlü canlı ses/video değildir. Ağız hareketi TTS ilerlemesi ve hece benzeri animasyondur; fonem hassasiyetinde dudak eşleme değildir. 3D yüz bir robot kafasıdır, fotogerçekçi insan avatarı değildir.
+
+## Kolay güncelleme
+
+`main` değiştiğinde **MIMO Android APK** iş akışı testleri ve analizi çalıştırır, APK üretir ve GitHub Releases’a `mimo-ai.apk` ekler. Aynı bağlantı her zaman en son başarılı sürümü gösterir:
+
+https://github.com/srkntsn/M-MO/releases/latest
+
+Android kurulumu kullanıcı onayı gerektirir. Sessiz/izinsiz APK kurulumu yapılmaz. Ayarların korunması için uygulama kimliği **ve imza anahtarı** aynı olmalıdır.
+
+### Kalıcı imza
+
+Bu depo test/debug APK üretir. İş akışı debug anahtarını cache içinde yeniden kullanır; cache silinir veya süresi dolarsa bu yeterli değildir. Uzun süreli güncellemeler için ilk kullanılan debug keystore'u güvenli bir yerde yedekleyip Base64 içeriğini depo Secret’ı `MIMO_DEBUG_KEYSTORE_BASE64` olarak ayarlayın. Dosyanın alias/parolası Android varsayılan debug değerleri olmalıdır (`androiddebugkey`, `android`). Anahtarı Git deposuna eklemeyin veya paylaşmayın. Play Store için ayrı release imzası gereklidir.
+
+Eski APK farklı anahtarla üretilmişse ilk geçişte Android güncellemeyi reddedebilir. Kaldırmak ayarları/geçmişi siler; bağlantı bilgilerini önce güvenli biçimde kaydedin. İmza anahtarı olmadan bunun aşılması mümkün değildir.
+
+## Backend güncellemesi
+
+Yeni `backend/worker.js`, sesli sohbet kişiliğini ve tek kare görüntü isteğini destekler. Eski metin istemcileriyle uyumludur. Mevcut `GEMINI_API_KEY`, `MIMO_ACCESS_TOKEN`, isteğe bağlı `GEMINI_MODEL` değerlerini değiştirmeyin.
+
+Cloudflare erişimi bu çalışma ortamına aktarılmadıysa Worker kendiliğinden güncellenmiş sayılmaz. İlk kurulum: mevcut Worker’ın **Edit code** ekranına `backend/worker.js` içeriğini yapıştırıp Deploy yapın.
+
+Tekrarlayan kopyalamayı kaldırmak için deponun Actions Secrets alanında `CLOUDFLARE_API_TOKEN` (ilgili hesaba Workers düzenleme yetkisi) ve `CLOUDFLARE_ACCOUNT_ID` ayarlandığında **MIMO Worker Deploy** iş akışı sonraki backend değişikliklerini otomatik deploy eder. Bu sırlar yoksa akış deploy’u açıkça atlar. Token üretimi ve yetkilendirmesi kullanıcı tarafından yapılmalıdır. İş akışı mevcut Worker Secrets değerlerini oluşturmaz/değiştirmez/silmez; `keep_vars` dashboard değişkenlerini de korur.
+
+## Doğrulama
+
+```
+flutter pub get
+flutter analyze lib test
+flutter test test/face_test.dart
+node --test backend/worker.test.mjs
+```
+
+Fiziksel telefonda: sessizlikten sonra yeniden dinleme, mikrofon izni reddi, arka plana alıp dönme, konuşmayı dokunarak kesme, kamera izni reddi, kamera kare analizi ve aynı imzayla güncelleme ayrıca denenmelidir. Birim/render testleri mikrofon veya kamera donanımını doğrulamaz.
+
+Gemini ağ bağlantısı, kullanılabilir model ve kotaya bağlıdır; sınırsız/ömür boyu hizmet garantisi yoktur.

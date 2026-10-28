@@ -1,0 +1,40 @@
+name: MIMO Worker Deploy
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['backend/worker.js', 'backend/wrangler.jsonc', '.github/workflows/deploy-worker.yml']
+permissions:
+  contents: read
+concurrency:
+  group: mimo-worker-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test backend/worker.test.mjs
+      - name: Check deployment connection
+        id: connection
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo '### Worker deploy skipped: Cloudflare connection secrets are not configured.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Deploy existing Worker, preserve its secrets
+        if: steps.connection.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: deploy --keep-vars

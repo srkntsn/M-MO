@@ -1,23 +1,31 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 
-void main() => runApp(const MimoApp());
+import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:url_launcher/url_launcher.dart';
+
+import 'face.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MimoApp());
+}
 
 class MimoApp extends StatelessWidget {
   const MimoApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'MİMO AI',
+    title: 'MİMO',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData.dark(useMaterial3: true).copyWith(
-      scaffoldBackgroundColor: const Color(0xFF0B1426),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF66D9FF), brightness: Brightness.dark),
-    ),
+    theme: ThemeData.dark(useMaterial3: true)
+        .copyWith(scaffoldBackgroundColor: const Color(0xFF060D1A)),
     home: const MimoHome(),
   );
 }
@@ -28,330 +36,649 @@ class MimoHome extends StatefulWidget {
   State<MimoHome> createState() => _MimoHomeState();
 }
 
-class _MimoHomeState extends State<MimoHome> {
-  // Point this to a trusted HTTPS proxy, never put a Gemini key in the APK.
-  String aiEndpoint = '';
-  String accessToken = '';
-  List<Map<String, String>> voices = [];
-  String? selectedVoice;
-  bool showSettings = false;
-  final endpointController = TextEditingController();
-  final tokenController = TextEditingController();
-  final List<Map<String, String>> conversation = [];
-
-  Future<String> aiAnswer(String message) async {
-    if (aiEndpoint.isEmpty) {
-      return 'Gerçek yapay zekâ bağlantısı henüz yapılandırılmadı. Mikrofonum çalışıyor, ama sorulara cevap verebilmem için güvenli sunucu bağlantısı gerekiyor.';
-    }
-    final uri = Uri.tryParse(aiEndpoint);
-    if (uri == null || uri.scheme != 'https') return 'Yapay zekâ bağlantı adresi güvenli değil.';
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
-    try {
-      final request = await client.postUrl(uri).timeout(const Duration(seconds: 15));
-      request.headers.contentType = ContentType.json;
-      if (accessToken.isNotEmpty) request.headers.set('Authorization', 'Bearer $accessToken');
-      request.add(utf8.encode(jsonEncode({'message': message, 'history': conversation.take(12).toList()})));
-      final res = await request.close().timeout(const Duration(seconds: 30));
-      final body = await utf8.decoder.bind(res).join().timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200) return 'Yapay zekâ servisi şu anda cevap veremiyor. Biraz sonra yeniden deneyebilirsin.';
-      final json = jsonDecode(body);
-      final answer = json is Map ? json['reply'] : null;
-      if (answer is! String || answer.trim().isEmpty) return 'Yapay zekâdan geçerli bir yanıt alamadım.';
-      conversation.add({'role':'user','text':message});
-      conversation.add({'role':'assistant','text':answer});
-      if (conversation.length > 12) conversation.removeRange(0, conversation.length - 12);
-      return answer;
-    } catch (_) {
-      return 'İnternet veya yapay zekâ bağlantısında sorun var. Bağlantını kontrol edebilir misin?';
-    } finally { client.close(force: true); }
+class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
+  final speech = stt.SpeechToText();
+  final tts = FlutterTts();
+  final history = <Map<String, String>>[];
+  String endpoint = '', token = '', mood = 'warm';
+  FaceMode mode = FaceMode.idle;
+  double energy = 0;
+  bool active = true,
+      settingsOpen = false,
+      sleeping = false,
+      busy = false,
+      speechReady = false,
+      starting = false;
+  bool microphoneBlocked = false;
+  int generation = 0, listenId = 0, failures = 0;
+  Timer? restart, settle, watchdog;
+  HttpClient? inFlight;
+  CameraController? camera;
+  String heard = '';
+  bool get canListen =>
+      mounted &&
+      active &&
+      !settingsOpen &&
+      !sleeping &&
+      !busy &&
+      !microphoneBlocked &&
+      speechReady &&
+      mode != FaceMode.speaking;
+  void display(FaceMode value) {
+    if (mounted) setState(() => mode = value);
   }
 
-  final stt.SpeechToText speech = stt.SpeechToText();
-  final FlutterTts tts = FlutterTts();
-  final TextEditingController input = TextEditingController();
-  Timer? blinkTimer;
-  bool blinking = false;
-  bool listening = false;
-  bool talking = false;
-  bool autoListen = true;
-  bool processing = false;
-  Timer? relistenTimer;
-  String face = 'normal';
-  String response = 'Merhaba! Ben MİMO. Konuşmak için mikrofona dokun.';
-  String heard = '';
+  bool valid(int id) => mounted && active && !settingsOpen && generation == id;
 
   @override
   void initState() {
     super.initState();
-    tts.setLanguage('tr-TR');
-    loadSettings();
-    tts.setSpeechRate(0.48);
-    tts.setCompletionHandler(() {
-      if (!mounted) return;
-      setState(() { talking = false; processing = false; });
-      scheduleListen();
-    });
-    Future.delayed(const Duration(seconds: 1), startListening);
-    blinkTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
-      if (!mounted || face == 'sleep') return;
-      setState(() => blinking = true);
-      await Future.delayed(const Duration(milliseconds: 170));
-      if (mounted) setState(() => blinking = false);
-    });
+    WidgetsBinding.instance.addObserver(this);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    boot();
   }
 
-  Future<void> loadSettings() async {
+  Future<void> boot() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('endpoint') ?? '';
-    final key = prefs.getString('access') ?? '';
+    endpoint = prefs.getString('endpoint') ?? '';
+    token = prefs.getString('access') ?? '';
+    try {
+      final saved = jsonDecode(prefs.getString('conversation') ?? '[]');
+      if (saved is List) {
+        for (final item in saved.take(12)) {
+          if (item is Map &&
+              ['user', 'assistant'].contains(item['role']) &&
+              item['text'] is String) {
+            history.add({
+              'role': item['role'] as String,
+              'text': item['text'] as String,
+            });
+          }
+        }
+      }
+    } catch (_) {
+      /* Ignore an invalid local history. */
+    }
+    await tts.setLanguage('tr-TR');
+    await tts.setSpeechRate(.49);
+    await tts.setPitch(1.04);
+    await tts.awaitSpeakCompletion(true);
     final voice = prefs.getString('voice');
-    final found = await tts.getVoices;
-    if (!mounted) return;
-    setState(() {
-      aiEndpoint = saved; accessToken = key; selectedVoice = voice;
-      endpointController.text = saved; tokenController.text = key;
-      if (found is List) voices = found.whereType<Map>().map((e) => e.map((k,v)=>MapEntry(k.toString(),v.toString())))
-        .where((e) => (e['locale'] ?? '').toLowerCase().startsWith('tr')).toList();
+    if (voice != null) {
+      final list = await tts.getVoices;
+      if (list is List) {
+        final matches = list.whereType<Map>().where((x) => x['name'] == voice);
+        if (matches.isNotEmpty)
+          await tts.setVoice({
+            'name': voice,
+            'locale': matches.first['locale'].toString(),
+          });
+      }
+    }
+    tts.setProgressHandler((text, start, end, word) {
+      if (mounted && mode == FaceMode.speaking)
+        setState(() => energy = .5 + (word.length % 5) / 10);
     });
-    if (voice != null) selectVoice(voice);
-  }
-
-  Future<void> selectVoice(String name) async {
-    final found = voices.where((e) => e['name'] == name).toList();
-    if (found.isEmpty) return;
-    await tts.setVoice({'name': name, 'locale': found.first['locale'] ?? 'tr-TR'});
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('voice', name);
-    if (mounted) setState(() => selectedVoice = name);
-  }
-
-  Future<void> saveConnection() async {
-    final url = endpointController.text.trim();
-    final token = tokenController.text.trim();
-    if (url.isNotEmpty && (Uri.tryParse(url)?.scheme != 'https')) {
-      setState(() => response = 'HTTPS bağlantı adresi gerekli.');
+    if (!mounted) return;
+    if (endpoint.isEmpty || token.isEmpty) {
+      await openSettings();
       return;
     }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('endpoint', url);
-    await prefs.setString('access', token);
-    if (mounted) setState(() { aiEndpoint = url; accessToken = token; showSettings = false; });
-  }
-
-  void scheduleListen() {
-    relistenTimer?.cancel();
-    if (mounted && autoListen && !talking && !processing) {
-      relistenTimer = Timer(const Duration(milliseconds: 900), startListening);
+    await prepareSpeech();
+    if (mounted && active && !settingsOpen) {
+      await say(
+        'Merhaba, buradayım! Benimle doğrudan konuşabilirsin. Konuşmamı kesmek için yüzüme dokun. Kamera için, kameraya bak demen yeterli.',
+      );
+      schedule();
     }
   }
 
-  Future<void> startListening() async {
-    if (!mounted || !autoListen || talking || listening || processing) return;
+  Future<void> prepareSpeech() async {
     try {
-      final available = await speech.initialize(
+      speechReady = await speech.initialize(
         onError: (e) {
-          if (!mounted) return;
-          setState(() => listening = false);
-          if (e.permanent) {
-            setState(() { autoListen = false; response = 'Mikrofon iznini veya ses tanıma hizmetini kontrol et.'; });
-          } else { scheduleListen(); }
+          if (!mounted || !active || settingsOpen || busy) return;
+          if (e.errorMsg.contains('permission') ||
+              e.errorMsg.contains('not_available')) {
+            microphoneBlocked = true;
+            display(FaceMode.error);
+          } else {
+            failures++;
+            schedule();
+          }
         },
         onStatus: (status) {
-          if (!mounted) return;
-          if (status == 'notListening' || status == 'done') {
-            setState(() => listening = false);
-            if (!processing && heard.trim().isNotEmpty) {
-              final message = heard;
-              heard = '';
-              reply(message);
-            } else { scheduleListen(); }
+          if (!mounted || !active || settingsOpen || busy) return;
+          if (status == 'done' || status == 'notListening') {
+            final session = listenId;
+            settle?.cancel();
+            settle = Timer(
+              const Duration(milliseconds: 450),
+              () => consume(session),
+            );
           }
         },
       );
-      if (!available || !mounted) return;
-      heard = '';
+      microphoneBlocked = !speechReady;
+    } catch (_) {
+      speechReady = false;
+      microphoneBlocked = true;
+    }
+    if (microphoneBlocked) display(FaceMode.error);
+  }
+
+  void schedule() {
+    restart?.cancel();
+    if (!canListen) return;
+    final delay = failures == 0 ? 550 : (800 * (1 + failures.clamp(0, 6)));
+    restart = Timer(Duration(milliseconds: delay), listen);
+  }
+
+  Future<void> listen() async {
+    if (!canListen || speech.isListening || starting) return;
+    starting = true;
+    final session = ++listenId;
+    heard = '';
+    try {
+      display(FaceMode.listening);
       await speech.listen(
         localeId: 'tr_TR',
-        listenFor: const Duration(seconds: 25),
-        pauseFor: const Duration(seconds: 3),
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 2),
+        listenOptions: stt.SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+          listenMode: stt.ListenMode.dictation,
+        ),
+        onSoundLevelChange: (level) {
+          if (mounted && mode == FaceMode.listening)
+            setState(() => energy = ((level + 2) / 12).clamp(0.0, 1.0));
+        },
         onResult: (r) {
-          if (!mounted || processing) return;
+          if (!canListen || session != listenId) return;
           heard = r.recognizedWords;
-          setState(() => response = 'Duyduğum: ${r.recognizedWords}');
-          if (r.finalResult && heard.trim().isNotEmpty) {
-            final message = heard;
-            heard = '';
-            reply(message);
-          }
+          if (r.finalResult) consume(session);
         },
       );
-      if (mounted) setState(() => listening = speech.isListening);
-    } catch (_) { scheduleListen(); }
-  }
-
-  String moodFor(String text) {
-    final q = text.toLowerCase();
-    if (RegExp(r'üzgün|mutsuz|ağlı|kötüyüm|canım sıkkın').hasMatch(q)) return 'sad';
-    if (RegExp(r'mutlu|harika|süper|sevindim|teşekkür|güzel').hasMatch(q)) return 'happy';
-    if (RegExp(r'şaşır|inanamıyorum|vay be').hasMatch(q)) return 'surprised';
-    return 'normal';
-  }
-
-  Future<void> speak(String answer) async {
-    if (speech.isListening) await speech.stop();
-    await tts.stop();
-    if (!mounted) return;
-    setState(() { response = answer; talking = true; });
-    await tts.speak(answer);
-  }
-
-  String answerFor(String message) {
-    final q = message.toLowerCase().trim();
-    if (q.contains('merhaba') || q.contains('selam')) return 'Merhaba! Seninle tanıştığıma sevindim.';
-    if (q.contains('nasılsın')) return 'Çok iyiyim! Senin günün nasıl geçiyor?';
-    if (q.contains('adın ne') || q.contains('kimsin')) return 'Ben MİMO. Senin sanal robot arkadaşınım.';
-    if (q.contains('saat')) {
-      final n = DateTime.now();
-      return 'Şu anda saat ${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}.';
+      if (!canListen || session != listenId) {
+        await speech.cancel();
+        return;
+      }
+      watchdog?.cancel();
+      watchdog = Timer(const Duration(seconds: 34), () async {
+        if (session != listenId || !canListen) return;
+        await speech.stop();
+        consume(session);
+      });
+      if (!speech.isListening) schedule();
+    } catch (_) {
+      failures++;
+      schedule();
+    } finally {
+      starting = false;
     }
-    if (q.contains('teşekkür')) return 'Ne demek! Seninle sohbet etmek çok güzel.';
-    if (q.contains('mutlu')) { setState(() => face = 'happy'); return 'Ben de mutluyum!'; }
-    if (q.contains('uyu') || q.contains('uyku')) { setState(() => face = 'sleep'); return 'Peki, biraz dinleniyorum.'; }
-    if (q.contains('uyan')) { setState(() => face = 'normal'); return 'Uyandım! Buradayım.'; }
-    return 'Seni duydum. Şu anda ilk sürümdeyim; gelişmiş yapay zekâ sohbetini yakında ekleyeceğiz.';
   }
 
-  Future<void> reply(String message) async {
-    if (message.trim().isEmpty || processing) return;
-    processing = true;
-    setState(() => face = moodFor(message));
-    input.clear();
-    FocusManager.instance.primaryFocus?.unfocus();
-    final answer = await aiAnswer(message);
-    if (mounted) await speak(answer);
+  void consume(int session) {
+    if (!canListen || session != listenId) return;
+    settle?.cancel();
+    watchdog?.cancel();
+    final text = heard.trim();
+    heard = '';
+    if (text.isEmpty) {
+      schedule();
+      return;
+    }
+    listenId++;
+    failures = 0;
+    respond(text);
   }
 
-  Future<void> toggleMic() async {
-    setState(() => autoListen = !autoListen);
-    if (autoListen) {
-      scheduleListen();
-    } else {
-      relistenTimer?.cancel();
-      await speech.stop();
-      if (mounted) setState(() => listening = false);
+  Future<void> say(String text) async {
+    if (!mounted || !active || settingsOpen) return;
+    await speech.cancel();
+    if (!mounted || !active || settingsOpen) return;
+    final spokenGeneration = generation;
+    display(FaceMode.speaking);
+    try {
+      await tts.speak(text).timeout(const Duration(seconds: 65));
+    } catch (_) {
+      await tts.stop();
+    } finally {
+      if (valid(spokenGeneration) && mode == FaceMode.speaking)
+        display(FaceMode.idle);
+    }
+  }
+
+  Future<Map<String, dynamic>?> capture(int id) async {
+    // Camera opens only after an explicit voice command, not during normal chat.
+    await say(
+      'Arka kamerayı göstermek istediğin şeye çevir. Birazdan tek bir fotoğrafı inceleyeceğim.',
+    );
+    if (!valid(id)) return null;
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) throw StateError('no_camera');
+    final selected = cameras.firstWhere(
+      (x) => x.lensDirection == CameraLensDirection.back,
+      orElse: () => cameras.first,
+    );
+    final controller = CameraController(
+      selected,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+    camera = controller;
+    XFile? picture;
+    try {
+      await controller.initialize();
+      if (!valid(id)) return null;
+      display(FaceMode.camera);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!valid(id)) return null;
+      picture = await controller.takePicture();
+      final bytes = await picture.readAsBytes();
+      if (bytes.length > 900000) throw StateError('image_too_large');
+      return {'mimeType': 'image/jpeg', 'data': base64Encode(bytes)};
+    } finally {
+      if (identical(camera, controller)) {
+        camera = null;
+        await controller.dispose();
+      }
+      if (picture != null) {
+        try {
+          await File(picture.path).delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<String> ask(
+    String message,
+    int id, {
+    Map<String, dynamic>? image,
+  }) async {
+    final uri = Uri.tryParse(endpoint);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        token.isEmpty) {
+      return 'Bağlantı ayarlarımı tamamlayalım. Yüzüme uzun basarak ayarları açabilirsin.';
+    }
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 10);
+    inFlight = client;
+    try {
+      final request = await client
+          .postUrl(uri)
+          .timeout(const Duration(seconds: 12));
+      request.followRedirects = false;
+      request.headers.contentType = ContentType.json;
+      request.headers.set('Authorization', 'Bearer $token');
+      request.add(
+        utf8.encode(
+          jsonEncode({
+            'message': message,
+            'history': history,
+            if (image != null) 'image': image,
+          }),
+        ),
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 55),
+      );
+      final body = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 401)
+        return 'Sunucu erişim parolam eşleşmiyor. Bağlantı ayarlarını kontrol edelim.';
+      if (response.statusCode == 429)
+        return 'Biraz hızlı konuştuk! Kısa bir ara verip tekrar deneyelim.';
+      if (response.statusCode == 413)
+        return 'Fotoğraf bu kez fazla büyük geldi. Bir daha deneyelim.';
+      if (response.statusCode != 200)
+        return image != null
+            ? 'Kamerayı şu anda yorumlayamadım. Sunucunun kamera destekli yeni sürümde olduğundan emin olalım.'
+            : 'Şu an yapay zekâ servisine ulaşamadım. Biraz sonra yeniden deneyelim.';
+      final result = jsonDecode(body);
+      final reply = result is Map ? result['reply'] : null;
+      if (reply is! String || reply.trim().isEmpty)
+        return 'Yanıtı anlayamadım. Tekrar dener misin?';
+      if (valid(id)) {
+        history.add({
+          'role': 'user',
+          'text': image != null
+              ? '$message [Kamera karesi paylaşıldı; görüntü saklanmadı.]'
+              : message,
+        });
+        history.add({'role': 'assistant', 'text': reply});
+        if (history.length > 12) history.removeRange(0, history.length - 12);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('conversation', jsonEncode(history));
+      }
+      return reply;
+    } catch (_) {
+      return 'Bağlantım koptu. İnterneti kontrol edip yeniden konuşabiliriz.';
+    } finally {
+      client.close(force: true);
+      if (identical(inFlight, client)) inFlight = null;
+    }
+  }
+
+  String normalize(String text) =>
+      text.toLowerCase().replaceAll('İ', 'i').replaceAll('ı', 'i');
+  Future<void> respond(String message) async {
+    if (busy || !active || settingsOpen) return;
+    busy = true;
+    final id = ++generation;
+    restart?.cancel();
+    settle?.cancel();
+    watchdog?.cancel();
+    await speech.cancel();
+    try {
+      if (!valid(id)) return;
+      final q = normalize(message);
+      if (RegExp(r'^(mimo[ ,]*)?(uyu|uyku modu|dinlen|dinlemeyi kapat)[.!?]*$')
+          .hasMatch(q)) {
+        sleeping = true;
+        await say(
+          'Biraz dinleniyorum. Yeniden konuşmak için yüzüme dokunman yeterli.',
+        );
+        if (valid(id)) display(FaceMode.sleeping);
+        return;
+      }
+      if (q.contains('geçmişi unut') ||
+          q.contains('gecmisi unut') ||
+          q.contains('sohbeti sil')) {
+        history.clear();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('conversation');
+        await say(
+          'Bu cihazdaki sohbet geçmişini sildim. Yeni bir başlangıç yapalım.',
+        );
+        return;
+      }
+      if (q.contains('ayarlari aç') || q.contains('ayarlari ac')) {
+        await openSettings();
+        return;
+      }
+      if (q.contains('güncelleme') || q.contains('guncelleme')) {
+        await checkUpdate();
+        return;
+      }
+      if (q.contains('yeni sürümü aç') ||
+          q.contains('yeni surumu ac') ||
+          q == 'mimo güncelle' ||
+          q == 'güncelle') {
+        final opened = await launchUrl(
+          Uri.parse('https://github.com/srkntsn/M-MO/releases/latest'),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!opened)
+          await say(
+            'İndirme sayfasını açamadım. GitHub üzerindeki MİMO sürümlerine bakabilirsin.',
+          );
+        return;
+      }
+      final wantsCamera = RegExp(
+        r'kameraya bak|kamerayi aç|kamerayi ac|kamera aç|kamera ac|buna bak|şuna bak|suna bak|bunu anlat|şunu anlat|sunu anlat|ne görüyorsun|ne goruyorsun|bunu oku',
+      ).hasMatch(q);
+      Map<String, dynamic>? image;
+      if (wantsCamera) {
+        try {
+          image = await capture(id);
+        } catch (_) {
+          if (valid(id))
+            await say(
+              'Kamerayı açamadım. Kamera iznini kontrol edip tekrar kameraya bak diyebilirsin.',
+            );
+          return;
+        }
+        if (!valid(id) || image == null) return;
+      }
+      if (!valid(id)) return;
+      setState(
+        () => mood = RegExp(r'üzgün|mutsuz|kötüyüm|sikkin').hasMatch(q)
+            ? 'gentle'
+            : RegExp(r'harika|güzel|mutlu|şaka').hasMatch(q)
+            ? 'happy'
+            : 'warm',
+      );
+      display(FaceMode.thinking);
+      final answer = await ask(message, id, image: image);
+      if (valid(id)) await say(answer);
+    } finally {
+      if (generation == id && mounted) {
+        busy = false;
+        if (active && !settingsOpen && !sleeping) {
+          display(microphoneBlocked ? FaceMode.error : FaceMode.idle);
+          schedule();
+        }
+      }
+    }
+  }
+
+  Future<void> checkUpdate() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    try {
+      final request = await client
+          .getUrl(
+            Uri.parse(
+              'https://api.github.com/repos/srkntsn/M-MO/releases/latest',
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
+      request.headers.set('User-Agent', 'MIMO-Android');
+      final response = await request.close().timeout(
+        const Duration(seconds: 10),
+      );
+      if (response.statusCode != 200) {
+        await say('Henüz yayımlanmış yeni bir sürüm bulamadım.');
+        return;
+      }
+      final release = jsonDecode(await utf8.decoder.bind(response).join());
+      final tag = release['tag_name']?.toString() ?? '';
+      final latest =
+          int.tryParse(
+            RegExp(r'build\.(\d+)$').firstMatch(tag)?.group(1) ?? '',
+          ) ??
+          0;
+      final current = await PackageInfo.fromPlatform();
+      if (latest > (int.tryParse(current.buildNumber) ?? 0)) {
+        await say(
+          'Yeni sürüm hazır! Yeni sürümü aç dersen indirme sayfasını açarım. Android kurulumu senin onayını isteyecek.',
+        );
+      } else {
+        await say('Şu an son yayımlanan sürümü kullanıyorsun.');
+      }
+    } catch (_) {
+      await say(
+        'Güncellemeleri şu anda kontrol edemedim. Biraz sonra tekrar deneyelim.',
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> interrupt() async {
+    generation++;
+    listenId++;
+    busy = false;
+    heard = '';
+    sleeping = false;
+    restart?.cancel();
+    settle?.cancel();
+    watchdog?.cancel();
+    inFlight?.close(force: true);
+    await speech.cancel();
+    await tts.stop();
+    if (!mounted || !active || settingsOpen) return;
+    if (!speechReady || microphoneBlocked) await prepareSpeech();
+    display(microphoneBlocked ? FaceMode.error : FaceMode.idle);
+    schedule();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive) return;
+    active = state == AppLifecycleState.resumed;
+    if (!active) {
+      generation++;
+      listenId++;
+      busy = false;
+      heard = '';
+      restart?.cancel();
+      settle?.cancel();
+      watchdog?.cancel();
+      speech.cancel();
+      tts.stop();
+      inFlight?.close(force: true);
+      final old = camera;
+      camera = null;
+      old?.dispose();
+      display(sleeping ? FaceMode.sleeping : FaceMode.idle);
+    } else if (!settingsOpen) {
+      schedule();
+    }
+  }
+
+  Future<void> openSettings() async {
+    if (!mounted || settingsOpen) return;
+    settingsOpen = true;
+    generation++;
+    listenId++;
+    busy = false;
+    restart?.cancel();
+    settle?.cancel();
+    watchdog?.cancel();
+    await speech.cancel();
+    await tts.stop();
+    inFlight?.close(force: true);
+    if (!mounted) return;
+    final url = TextEditingController(text: endpoint),
+        secret = TextEditingController(text: token);
+    String? error;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: endpoint.isNotEmpty,
+      builder: (context) => StatefulBuilder(
+        builder: (context, refresh) => AlertDialog(
+          title: const Text('MİMO bağlantısı'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Normal ekranda yalnızca yüzüm var. Ayarlara yüzüme uzun basarak dönersin. Mikrofon yalnızca uygulama açıkken dinler. “Kameraya bak” dediğinde tek kare Gemini’ye gönderilir; fotoğraf cihazda saklanmaz. Son 6 konuşma cihazda tutulur; “geçmişi unut” diyerek silebilirsin.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: url,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'HTTPS sunucu adresi',
+                  ),
+                ),
+                TextField(
+                  controller: secret,
+                  obscureText: true,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Sunucu erişim parolası',
+                  ),
+                ),
+                const Text(
+                  'Gemini API anahtarını buraya girme.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                if (error != null)
+                  Text(error!, style: const TextStyle(color: Colors.orange)),
+              ],
+            ),
+          ),
+          actions: [
+            if (endpoint.isNotEmpty)
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Kapat'),
+              ),
+            FilledButton(
+              onPressed: () async {
+                final uri = Uri.tryParse(url.text.trim());
+                if (uri == null ||
+                    uri.scheme != 'https' ||
+                    uri.host.isEmpty ||
+                    uri.userInfo.isNotEmpty ||
+                    secret.text.trim().isEmpty) {
+                  refresh(
+                    () => error =
+                        'Geçerli HTTPS adresi ve erişim parolası gerekli.',
+                  );
+                  return;
+                }
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('endpoint', url.text.trim());
+                await prefs.setString('access', secret.text.trim());
+                endpoint = url.text.trim();
+                token = secret.text.trim();
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: const Text('Kaydet'),
+            ),
+          ],
+        ),
+      ),
+    );
+    // Text fields can still be mounted during the dialog's exit animation.
+    Future<void>.delayed(const Duration(milliseconds: 400), () {
+      url.dispose();
+      secret.dispose();
+    });
+    settingsOpen = false;
+    if (mounted && active) {
+      sleeping = false;
+      if (!speechReady || microphoneBlocked) await prepareSpeech();
+      schedule();
     }
   }
 
   @override
   void dispose() {
-    blinkTimer?.cancel();
-    relistenTimer?.cancel();
-    speech.stop();
+    WidgetsBinding.instance.removeObserver(this);
+    generation++;
+    active = false;
+    restart?.cancel();
+    settle?.cancel();
+    watchdog?.cancel();
+    speech.cancel();
     tts.stop();
-    input.dispose();
-    endpointController.dispose();
-    tokenController.dispose();
+    inFlight?.close(force: true);
+    camera?.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    final eyeHeight = blinking || face == 'sleep' ? 9.0 : face == 'happy' ? 26.0 : face == 'sad' ? 45.0 : face == 'surprised' ? 75.0 : 65.0;
-    return Scaffold(
-      appBar: AppBar(title: const Text('MİMO AI'), centerTitle: true, backgroundColor: Colors.transparent, actions: [IconButton(onPressed: () { setState(() => showSettings = !showSettings); }, icon: const Icon(Icons.settings))]),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            children: [
-              if (showSettings) ...[
-                TextField(controller: endpointController, decoration: const InputDecoration(labelText: 'HTTPS yapay zekâ sunucusu')),
-                TextField(controller: tokenController, obscureText: true, decoration: const InputDecoration(labelText: 'Sunucu erişim parolası')),
-                FilledButton(onPressed: saveConnection, child: const Text('Bağlantıyı kaydet')),
-                if (voices.isNotEmpty) DropdownButton<String>(value: voices.any((e)=>e['name']==selectedVoice) ? selectedVoice : null, hint: const Text('Türkçe ses seç'), items: voices.map((e)=>DropdownMenuItem(value: e['name'], child: Text(e['name'] ?? '', overflow: TextOverflow.ellipsis))).toList(), onChanged: (v) { if (v!=null) selectVoice(v); }),
-                const Text('API anahtarını buraya yazma. Sunucuya yalnızca erişim parolanı gir.', style: TextStyle(fontSize: 11)),
-              ],
-              const Text('Senin dijital arkadaşın', style: TextStyle(color: Color(0xFF9AAFCB))),
-              const Spacer(),
-              Container(
-                width: double.infinity,
-                height: 260,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF172A48),
-                  borderRadius: BorderRadius.circular(64),
-                  border: Border.all(color: const Color(0xFF4B789F), width: 3),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      eye(eyeHeight), const SizedBox(width: 28), eye(eyeHeight),
-                    ]),
-                    const SizedBox(height: 18),
-                    Text(face == 'happy' ? 'ᴗ' : face == 'sleep' ? '—' : face == 'sad' ? '︵' : face == 'surprised' ? '○' : talking ? '◯' : '⌣',
-                      style: const TextStyle(fontSize: 40, color: Color(0xFF72DEFF))),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(response, textAlign: TextAlign.center, style: const TextStyle(fontSize: 17)),
-              const SizedBox(height: 18),
-              Text(autoListen ? (listening ? 'Dinliyorum…' : talking ? 'Konuşuyorum…' : 'Otomatik dinleme açık') : 'Dinleme kapalı'),
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: toggleMic,
-                icon: Icon(autoListen ? Icons.mic : Icons.mic_off),
-                label: Text(autoListen ? 'Dinlemeyi kapat' : 'Dinlemeyi aç'),
-              ),
-              const SizedBox(height: 14),
-              Row(children: [
-                Expanded(child: TextField(
-                  controller: input,
-                  onSubmitted: reply,
-                  decoration: const InputDecoration(hintText: 'MİMO’ya yaz...', border: OutlineInputBorder()),
-                )),
-                IconButton(onPressed: () => reply(input.text), icon: const Icon(Icons.send)),
-              ]),
-              const SizedBox(height: 10),
-              Text(aiEndpoint.isEmpty ? 'Yapay zekâ sunucusu bağlı değil' : 'Yapay zekâ bağlantısı yapılandırıldı',
-                textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: Colors.white54)),
-            ],
-          ),
-        ),
+  Widget build(BuildContext context) => Scaffold(
+    body: Semantics(
+      label: mode == FaceMode.listening
+          ? 'MİMO dinliyor'
+          : mode == FaceMode.speaking
+          ? 'MİMO konuşuyor'
+          : mode == FaceMode.camera
+          ? 'MİMO kameraya bakıyor'
+          : mode == FaceMode.sleeping
+          ? 'MİMO dinleniyor'
+          : 'MİMO',
+      hint: 'Konuşmasını kesmek veya uyandırmak için dokun. Bağlantı ayarları için uzun bas.',
+      onTap: interrupt,
+      onLongPress: openSettings,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: interrupt,
+        onLongPress: openSettings,
+        child: MimoFace(mode: mode, energy: energy, mood: mood),
       ),
-    );
-  }
-
-  Widget eye(double height) => AnimatedContainer(
-    duration: const Duration(milliseconds: 220),
-    curve: Curves.easeInOut,
-    width: 78,
-    height: height,
-    clipBehavior: Clip.antiAlias,
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        begin: Alignment.topLeft, end: Alignment.bottomRight,
-        colors: [Color(0xFFB4F7FF), Color(0xFF57CCFB), Color(0xFF189FD9)],
-      ),
-      borderRadius: BorderRadius.circular(38),
-      boxShadow: const [BoxShadow(color: Color(0x8851CFFF), blurRadius: 19, spreadRadius: 3)],
     ),
-    child: height > 25 ? Center(
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        width: face == 'surprised' ? 25 : 20,
-        height: face == 'surprised' ? 30 : 27,
-        decoration: BoxDecoration(
-          color: const Color(0xFF153958),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: Container(margin: const EdgeInsets.only(left: 4, top: 5),
-            width: 6, height: 6,
-            decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
-        ),
-      ),
-    ) : null,
   );
 }
