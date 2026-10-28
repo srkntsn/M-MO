@@ -18,8 +18,7 @@ export default {
       .map(x=>({role:x.role==='assistant'?'model':'user',parts:[{text:x.text.slice(0,1500)}]}));
     contents.push({role:'user',parts:[{text:message}]});
     const model = env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-    const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
-    const ai = await fetch(endpoint, {
+    const callModel = (id) => fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(id)+':generateContent', {
       method:'POST',
       headers:{'Content-Type':'application/json','x-goog-api-key':env.GEMINI_API_KEY},
       body:JSON.stringify({
@@ -28,13 +27,37 @@ export default {
         generationConfig:{maxOutputTokens:320,temperature:0.75}
       })
     });
+    let chosenModel = model;
+    let ai = await callModel(chosenModel);
+    if (ai.status === 404) {
+      // Use the API key's actual accessible models rather than guessing IDs.
+      const listing = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
+        headers: {'x-goog-api-key':env.GEMINI_API_KEY}
+      });
+      if (listing.ok) {
+        const catalog = await listing.json();
+        const candidates = (catalog.models || []).filter(x =>
+          (x.supportedGenerationMethods || []).includes('generateContent') &&
+          /gemini/i.test(x.name || '') &&
+          !/image|audio|tts|embedding|live|vision|robotics/i.test(x.name || '')
+        );
+        const preferred = candidates.find(x=>/flash-lite/i.test(x.name||'')) ||
+          candidates.find(x=>/flash/i.test(x.name||'')) || candidates[0];
+        if(preferred) {
+          chosenModel = preferred.name.replace(/^models\//,'');
+          if(chosenModel !== model) ai = await callModel(chosenModel);
+        }
+      } else {
+        console.error('Gemini model list failure', {status: listing.status});
+      }
+    }
     if(!ai.ok) {
       let reason = 'unknown';
       try {
         const failed = await ai.json();
         reason = String(failed.error?.status || failed.error?.code || 'unknown');
       } catch (_) {}
-      console.error('Gemini upstream failure', {status: ai.status, reason, model});
+      console.error('Gemini upstream failure', {status: ai.status, reason, model:chosenModel});
       return Response.json({error:'AI unavailable', upstream_status:ai.status, reason}, {status:503});
     }
     const result=await ai.json();
