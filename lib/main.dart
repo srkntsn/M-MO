@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
@@ -29,7 +30,13 @@ class MimoHome extends StatefulWidget {
 
 class _MimoHomeState extends State<MimoHome> {
   // Point this to a trusted HTTPS proxy, never put a Gemini key in the APK.
-  static const aiEndpoint = String.fromEnvironment('MIMO_API_URL', defaultValue: '');
+  String aiEndpoint = '';
+  String accessToken = '';
+  List<Map<String, String>> voices = [];
+  String? selectedVoice;
+  bool showSettings = false;
+  final endpointController = TextEditingController();
+  final tokenController = TextEditingController();
   final List<Map<String, String>> conversation = [];
 
   Future<String> aiAnswer(String message) async {
@@ -42,6 +49,7 @@ class _MimoHomeState extends State<MimoHome> {
     try {
       final request = await client.postUrl(uri).timeout(const Duration(seconds: 15));
       request.headers.contentType = ContentType.json;
+      if (accessToken.isNotEmpty) request.headers.set('Authorization', 'Bearer $accessToken');
       request.add(utf8.encode(jsonEncode({'message': message, 'history': conversation.take(12).toList()})));
       final res = await request.close().timeout(const Duration(seconds: 30));
       final body = await utf8.decoder.bind(res).join().timeout(const Duration(seconds: 15));
@@ -76,6 +84,7 @@ class _MimoHomeState extends State<MimoHome> {
   void initState() {
     super.initState();
     tts.setLanguage('tr-TR');
+    loadSettings();
     tts.setSpeechRate(0.48);
     tts.setCompletionHandler(() {
       if (!mounted) return;
@@ -89,6 +98,44 @@ class _MimoHomeState extends State<MimoHome> {
       await Future.delayed(const Duration(milliseconds: 170));
       if (mounted) setState(() => blinking = false);
     });
+  }
+
+  Future<void> loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('endpoint') ?? '';
+    final key = prefs.getString('access') ?? '';
+    final voice = prefs.getString('voice');
+    final found = await tts.getVoices;
+    if (!mounted) return;
+    setState(() {
+      aiEndpoint = saved; accessToken = key; selectedVoice = voice;
+      endpointController.text = saved; tokenController.text = key;
+      if (found is List) voices = found.whereType<Map>().map((e) => e.map((k,v)=>MapEntry(k.toString(),v.toString())))
+        .where((e) => (e['locale'] ?? '').toLowerCase().startsWith('tr')).toList();
+    });
+    if (voice != null) selectVoice(voice);
+  }
+
+  Future<void> selectVoice(String name) async {
+    final found = voices.where((e) => e['name'] == name).toList();
+    if (found.isEmpty) return;
+    await tts.setVoice({'name': name, 'locale': found.first['locale'] ?? 'tr-TR'});
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('voice', name);
+    if (mounted) setState(() => selectedVoice = name);
+  }
+
+  Future<void> saveConnection() async {
+    final url = endpointController.text.trim();
+    final token = tokenController.text.trim();
+    if (url.isNotEmpty && (Uri.tryParse(url)?.scheme != 'https')) {
+      setState(() => response = 'HTTPS bağlantı adresi gerekli.');
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('endpoint', url);
+    await prefs.setString('access', token);
+    if (mounted) setState(() { aiEndpoint = url; accessToken = token; showSettings = false; });
   }
 
   void scheduleListen() {
@@ -202,6 +249,8 @@ class _MimoHomeState extends State<MimoHome> {
     speech.stop();
     tts.stop();
     input.dispose();
+    endpointController.dispose();
+    tokenController.dispose();
     super.dispose();
   }
 
@@ -209,12 +258,19 @@ class _MimoHomeState extends State<MimoHome> {
   Widget build(BuildContext context) {
     final eyeHeight = blinking || face == 'sleep' ? 9.0 : face == 'happy' ? 26.0 : face == 'sad' ? 45.0 : face == 'surprised' ? 75.0 : 65.0;
     return Scaffold(
-      appBar: AppBar(title: const Text('MİMO AI'), centerTitle: true, backgroundColor: Colors.transparent),
+      appBar: AppBar(title: const Text('MİMO AI'), centerTitle: true, backgroundColor: Colors.transparent, actions: [IconButton(onPressed: () { setState(() => showSettings = !showSettings); }, icon: const Icon(Icons.settings))]),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: Column(
             children: [
+              if (showSettings) ...[
+                TextField(controller: endpointController, decoration: const InputDecoration(labelText: 'HTTPS yapay zekâ sunucusu')),
+                TextField(controller: tokenController, obscureText: true, decoration: const InputDecoration(labelText: 'Sunucu erişim parolası')),
+                FilledButton(onPressed: saveConnection, child: const Text('Bağlantıyı kaydet')),
+                if (voices.isNotEmpty) DropdownButton<String>(value: voices.any((e)=>e['name']==selectedVoice) ? selectedVoice : null, hint: const Text('Türkçe ses seç'), items: voices.map((e)=>DropdownMenuItem(value: e['name'], child: Text(e['name'] ?? '', overflow: TextOverflow.ellipsis))).toList(), onChanged: (v) { if (v!=null) selectVoice(v); }),
+                const Text('API anahtarını buraya yazma. Sunucuya yalnızca erişim parolanı gir.', style: TextStyle(fontSize: 11)),
+              ],
               const Text('Senin dijital arkadaşın', style: TextStyle(color: Color(0xFF9AAFCB))),
               const Spacer(),
               Container(
