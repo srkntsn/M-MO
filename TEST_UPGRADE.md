@@ -29,13 +29,19 @@ Bu kayıt sistemi iki kişilik test içindir: tek Durable Object ve 100 cihaz s�
 
 `scripts/create_avatar.py` Blender'da modellenebilir seramik android başı üretir. Ayrıntılı gözler, daralan çene, kaşlar, burun, ayrı üst/alt dudaklar ve `jawOpen` morph hedefleri bulunur. Model fotogerçekçi insan iddiası taşımaz.
 
-`MIMO Blender avatar` iş akışı `.blend`, `.glb` ve iki render PNG'si üretir. Model henüz uygulamanın çizim bileşenine bağlanmış değildir; mevcut APK yüzü bu değişiklikle otomatik değişmez. Render ve telefon performansı kontrol edilmeden entegrasyon tamamlanmış sayılmaz.
+`MIMO Blender avatar` iş akışı `.blend`, `.glb` ve iki render PNG'si üretir. Model uygulamaya ModelViewer ile bağlandı; APK derlemesi GLB dosyasını Blender ile üretip paketler. MimoSpeech morph animasyonu, sunucu sesinde WAV enerji zarfıyla; yerel ses yedeğinde kelime ilerlemesiyle sürülür. Bu yaklaşık dudak eşleştirmesidir, fonem/visem hizalaması değildir. 29 Ekim 2026 tarihli CI renderi başarıyla üretildi ve portre görsel olarak incelendi. Fiziksel telefon performansı henüz doğrulanmadı.
 
-## Sonraki üretim işleri
+## Ses, sağlayıcı ve güncelleme
 
-- Doğal Türkçe ses hizmeti ve sesle senkronize visemler; mevcut ses motoru Android TTS'dir.
-- Hazır hizmet ile gelişmiş ayarlarda isteğe bağlı kullanıcı API hesabı. Normal sohbet abonelikleri API erişimi yerine kullanılamaz.
-- Google Play sürümünde yalnızca Play güncelleme mekanizması; mevcut GitHub sayfası test dağıtımına aittir.
+- Hazır hizmette Gemini ses üretimi `/speech` üzerinden kullanılır; başarısız olursa Android TTS yedeğine döner. Gerçek sağlayıcı kotası ve Türkçe ses kalitesi canlı telefon testinde kontrol edilmelidir. WAV enerji zarfı dudak açıklığını sürer.
+- Gelişmiş ayarlarda Gemini, OpenAI ve Claude için kullanıcının kendi API anahtarı/modeli seçilebilir; anahtar güvenli depoda tutulur, istek doğrudan seçilen sağlayıcıya gider. Hazır hizmet varsayılandır. Konuşma sesi hazır MİMO hizmetini kullanır; özel model seçimi ses hizmetini değiştirmez.
+- Test sürümü yeni APK'yı indirir, SHA-256 ve kurulum öncesinde paket/sürüm/imza kontrolü yapar; Android'in onay ekranını açar. Kullanıcı kurulumu kendisi onaylar. Ayarlar silinmez. Play kaynağından gelen kurulumda Play güncellemesi kullanılır; dış APK kurulumu kapalıdır. Mağaza derlemesi `MIMO_PLAY_BUILD=1` ile hazırlanmalıdır.
+
+## Yayından önce kalan doğrulamalar
+
+- Gerçek cihazda mikrofon izinleri, ön/arka görüntü, ses gecikmesi, yüz performansı, davet ve uygulama üstüne güncelleme.
+- Canlı Worker dağıtımı ve gerçek sağlayıcıyla sohbet/görsel/ses doğrulaması.
+- Fotogerçekçi insan kalitesi, ayrı fonem/visem eşleştirmesi, göz kırpma ve hapşırma sesi algılama bu adayda tamamlanmış özellik değildir.
 - Kalıcı imza anahtarı/Play App Signing, mağaza AAB'si ve faturalandırma.
 - Fiziksel cihaz testleri, kötü ağ koşulları, gecikme ölçümleri ve gerçek yük testleri.
 

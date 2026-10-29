@@ -71,8 +71,12 @@ class AppUpdater {
     running = true;
     try {
       if (await fromPlay()) {
-        await InAppUpdate.startFlexibleUpdate();
-        await InAppUpdate.completeFlexibleUpdate();
+        final result = await InAppUpdate.startFlexibleUpdate();
+        if (result == AppUpdateResult.success) {
+          await InAppUpdate.completeFlexibleUpdate();
+        } else if (result == AppUpdateResult.inAppUpdateFailed) {
+          throw const FormatException('Play güncellemesi tamamlanamadı.');
+        }
         return;
       }
       if (update['play'] == true)
