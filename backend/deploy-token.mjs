@@ -20,6 +20,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const token = normalizeDeploymentToken(raw);
     if (!/^[a-fA-F0-9]{32}$/.test(account)) throw new Error('Cloudflare account ID must contain 32 hexadecimal characters.');
     if (token === account) throw new Error('CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID contain the same value. An account ID cannot authenticate deployment. No secret value was printed.');
+    const verifyPath = token.startsWith('cfat_') ? '/accounts/' + account + '/tokens/verify' : '/user/tokens/verify';
+    const verified = await fetch('https://api.cloudflare.com/client/v4' + verifyPath, {
+      headers: {Authorization: 'Bearer ' + token},
+      signal: AbortSignal.timeout(10000)
+    });
+    const verification = await verified.json();
+    if (!verified.ok || !verification.success || verification.result?.status !== 'active') {
+      const codes = (verification.errors || []).map(x => Number(x.code)).filter(Number.isFinite).join(',');
+      throw new Error('TOKEN_VERIFICATION_FAILED: Cloudflare rejected the saved token; status=' + verified.status + ', codes=' + codes + '. No credentials were printed.');
+    }
+    console.log('TOKEN_VERIFIED_ACTIVE: Saved token is active for its issuing account.');
     if (!process.env.GITHUB_ENV) throw new Error('GitHub Actions environment file is missing.');
     console.log('::add-mask::' + token);
     appendFileSync(process.env.GITHUB_ENV, 'MIMO_DEPLOY_TOKEN=' + token + '\nMIMO_DEPLOY_ACCOUNT=' + account + '\n');
