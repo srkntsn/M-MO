@@ -7,9 +7,9 @@ import 'package:model_viewer_plus/model_viewer_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'face.dart';
 
-/// Blender-built glTF with articulated lips. Speech progress drives mouth
-/// poses at word boundaries; this is approximate word-timed articulation,
-/// not audio-derived phoneme alignment.
+/// Textured anatomical glTF with coordinated jaw, teeth, tongue and eyelids.
+/// Playback PCM energy drives the jaw; this is amplitude-based articulation,
+/// not phoneme alignment.
 class BlenderAvatar extends StatefulWidget {
   const BlenderAvatar(
       {super.key,
@@ -111,8 +111,9 @@ class _BlenderAvatarState extends State<BlenderAvatar> {
       autoPlay: false,
       autoRotate: false,
       environmentImage: 'neutral',
-      exposure: 1.15,
-      cameraOrbit: '0deg 90deg 96%',
+      exposure: .95,
+      cameraTarget: '0m 0.035m 0m',
+      cameraOrbit: '0deg 90deg 90%',
       fieldOfView: '30deg',
       backgroundColor: const Color(0xFF060D1A),
       animationName: 'MimoPerformance',
@@ -139,7 +140,7 @@ class _BlenderAvatarState extends State<BlenderAvatar> {
             const blink=time%4.8;
             viewer.currentTime=state.sleeping ? 25/24 : state.speaking ? .5*amount : blink>4.6 ? 1+(blink-4.6)/.2*.125 : 0;
           }
-          viewer.cameraOrbit=`${Math.sin(time*.45)*3}deg ${90+Math.sin(time*.7)*1.2}deg 96%`;
+          viewer.cameraOrbit=`${Math.sin(time*.45)*3}deg ${90+Math.sin(time*.7)*1.2}deg 90%`;
         },90);
       ''',
       onWebViewCreated: (value) {

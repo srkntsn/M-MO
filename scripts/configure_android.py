@@ -5,7 +5,8 @@ p = Path('android/app/src/main/AndroidManifest.xml')
 s = p.read_text()
 needle = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
 addition = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <queries>
@@ -59,6 +60,7 @@ activity = activities[0]
 package = re.search(r'^package\s+(\S+)', activity.read_text()).group(1)
 template = Path('scripts/MainActivity.kt.in').read_text()
 activity.write_text(template.replace('{{PACKAGE}}', package).replace('{{PLAY_BUILD}}', 'true' if play else 'false'))
+(activity.parent / 'LiveAudio.kt').write_text(Path('scripts/LiveAudio.kt.in').read_text().replace('{{PACKAGE}}', package))
 gradle = Path('android/app/build.gradle.kts')
 if gradle.exists():
     gradle.write_text(gradle.read_text().replace('minSdk = flutter.minSdkVersion', 'minSdk = 24'))

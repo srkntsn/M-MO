@@ -1,3 +1,15 @@
+# MİMO 0.7
+
+Ön planda sürekli mikrofon + Gemini Live ses bağlantısı. Normal sohbet sırasında AudioRecord durdurulup yeniden başlatılmaz. Çıkış PCM 24 kHz, giriş PCM 16 kHz/20 ms. Server-side VAD, START_OF_ACTIVITY_INTERRUPTS; kesilme sinyali Android ses kuyruğunu temizler. AEC cihaz destekliyorsa etkinleşir. Arka plan/uyku/ayarlar mikrofonu kapatır.
+
+`GET /live` WebSocket yükseltmesi mevcut owner/device bearer yetkisini kullanır. Worker, erişilebilir `bidiGenerateContent` modelini katalogdan seçer; mevcut `GEMINI_MODEL` metin API ayarı değişmez. İstenirse ayrıca `GEMINI_LIVE_MODEL` kullanılabilir. Gemini anahtarı Worker'da kalır. POST `/` ve `/speech` eski istemciler için korunur.
+
+Yüz: CC0 Vitruvian anatomik model, taşınabilir glTF PBR kaplamaları ve gerçek FACS şekilleri. Kaynaklar `scripts/avatar_sources.json` içindeki commit ve SHA-256 değerlerine sabitlenir; `python scripts/fetch_avatar_sources.py` indirir ve doğrular. Credits: `assets/source/NOTICE-VITRUVIAN.md`. Blender aynı modeli hem mobil GLB hem Cycles önizlemeleri için kullanır. Ses seviyesine bağlı çene hareketi, fonem hizalaması değildir.
+
+Güncelleme: uygulama açılışında GitHub Release kanalı kontrol edilir. Kullanıcı uygulama içinden günceller; Android kurulum onayı gerekir. Anahtar/parola değiştirilmez. Fiziksel telefon yankı/Bluetooth ve gecikme testleri ayrıca yapılmalıdır.
+
+---
+
 # MİMO · 0.6
 
 Türkçe sesli sanal arkadaş. Normal ekranda yalnızca perspektifle çizilen, ışıklandırılmış geniş hatlı, insana benzeyen bir 3D yüz görünür. Model ve animasyonlar cihazda çalışır; dışarıdan 3D dosya indirmez.

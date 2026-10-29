@@ -1,4 +1,5 @@
 import {authorized, deviceRoutes} from './devices.js';
+import {liveResponse} from './live.js';
 import {speechResponse} from './speech.js';
 export {DeviceRegistry} from './devices.js';
 // Existing GEMINI_API_KEY, MIMO_ACCESS_TOKEN and optional GEMINI_MODEL bindings are preserved.
@@ -35,6 +36,10 @@ export default {
     const deviceResponse = await deviceRoutes(request, env);
     if (deviceResponse) return deviceResponse;
     const path=new URL(request.url).pathname;
+    if (path==='/live') {
+      if (!(await authorized(request, env))) return Response.json({error:'Unauthorized'},{status:401});
+      return liveResponse(request,env,PERSONA);
+    }
     if (!['/','/speech'].includes(path)) return new Response('Not found', {status:404});
     if (request.method !== 'POST') return new Response('Not found', {status:404});
     if (!(await authorized(request, env))) {

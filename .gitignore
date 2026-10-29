@@ -18,3 +18,16 @@ avatar-build/
 assets/avatar/*.glb
 
 assets/avatar/*.png
+
+.idea/
+.metadata
+assets/source/vitruvian/
+
+avatar-final/
+avatar-mobile/
+assets/avatar/textures/
+
+avatar-short/
+
+assets/avatar/*.blend
+assets/avatar/*.blend1

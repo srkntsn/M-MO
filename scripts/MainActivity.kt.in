@@ -13,6 +13,11 @@ import java.io.File
 import java.security.MessageDigest
 
 class MainActivity: FlutterActivity() {
+    private var liveAudio: LiveAudio? = null
+    override fun onResume() { super.onResume(); liveAudio?.setForeground(true) }
+    override fun onPause() { liveAudio?.setForeground(false); super.onPause() }
+    override fun onStop() { liveAudio?.setForeground(false); super.onStop() }
+    override fun onDestroy() { liveAudio?.stop(); super.onDestroy() }
     private val playBuild = {{PLAY_BUILD}}
     private fun fromPlay(): Boolean {
         if (playBuild) return true
@@ -23,6 +28,7 @@ class MainActivity: FlutterActivity() {
     }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        liveAudio = LiveAudio(this, flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mimo/update").setMethodCallHandler { call, result ->
             try {
                 when (call.method) {

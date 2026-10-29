@@ -1,13 +1,12 @@
 name: mimo_ai
 description: MIMO - sesli, kamerali, 3D sanal arkadas
 publish_to: none
-version: 0.6.0+6
+version: 0.7.0+7
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:
   flutter:
     sdk: flutter
-  speech_to_text: ^7.4.0
   flutter_tts: ^4.2.5
   shared_preferences: ^2.3.2
   package_info_plus: ^8.3.1

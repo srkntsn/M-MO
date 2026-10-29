@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'face.dart';
 import 'invitations.dart';
@@ -18,8 +17,7 @@ import 'camera_image.dart';
 import 'avatar.dart';
 import 'neural_voice.dart';
 import 'updater.dart';
-import 'providers.dart';
-import 'recognition_turn.dart';
+import 'live_voice.dart';
 
 final appLinks = AppLinks();
 
@@ -47,11 +45,26 @@ class MimoHome extends StatefulWidget {
 }
 
 class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
-  final speech = stt.SpeechToText();
+  late final LiveVoice live = LiveVoice(
+    onState: (state) {
+      if (mounted && active && !settingsOpen && !sleeping)
+        display(state == 'connecting' ? FaceMode.thinking : FaceMode.listening);
+    },
+    onLevel: (level) {
+      if (mounted && active && !settingsOpen && !sleeping)
+        setState(() {
+          energy = level;
+          mode = level > 0 ? FaceMode.speaking : FaceMode.listening;
+        });
+    },
+    onTool: liveTool,
+    onError: liveError,
+  );
+  bool liveErrorOpen = false;
+
   final tts = FlutterTts();
   final neuralVoice = NeuralVoice();
   final updater = AppUpdater();
-  CustomAI? customAI;
   final history = <Map<String, String>>[];
   final inviteAccess = InviteAccess();
   StreamSubscription<Uri>? linkSubscription;
@@ -64,31 +77,13 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   bool active = true,
       settingsOpen = false,
       sleeping = false,
-      busy = false,
-      speechReady = false,
-      starting = false;
-  bool microphoneBlocked = false, preparingSpeech = false;
-  int generation = 0, listenId = 0, failures = 0;
-  Timer? restart, settle, watchdog, listeningHealth;
-  final recognitionTurn = RecognitionTurn();
-  DateTime lastListenRequest = DateTime.fromMillisecondsSinceEpoch(0);
+      microphoneReady = false;
+  bool microphoneBlocked = false;
+  int generation = 0;
   bool cloudVoice = false;
-  HttpClient? inFlight;
   CameraController? camera;
-  String heard = '';
   String speechWord = '';
   int speechOffset = 0;
-  bool get canListen =>
-      mounted &&
-      active &&
-      !settingsOpen &&
-      !sleeping &&
-      !busy &&
-      !microphoneBlocked &&
-      speechReady &&
-      !booting &&
-      !permissionFlow &&
-      mode != FaceMode.speaking;
   void display(FaceMode value) {
     if (mounted) setState(() => mode = value);
   }
@@ -106,15 +101,6 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         display(FaceMode.error);
       },
     );
-    listeningHealth = Timer.periodic(const Duration(milliseconds: 800), (_) {
-      if (!canListen ||
-          starting ||
-          speech.isListening ||
-          (settle?.isActive ?? false) ||
-          (restart?.isActive ?? false)) return;
-      if (DateTime.now().difference(lastListenRequest).inMilliseconds > 1000)
-        schedule();
-    });
     boot();
   }
 
@@ -187,155 +173,82 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       await openSettings();
       return;
     }
-    await prepareSpeech();
-    if (mounted && active && !settingsOpen) {
-      await say(
-        'Merhaba, buradayım! Benimle doğrudan konuşabilirsin. Konuşmamı kesmek için yüzüme dokun. Kamera için, kameraya bak demen yeterli.',
-      );
-      schedule();
-      unawaited(checkUpdate(automatic: true));
-    }
+    await resumeListening();
+    unawaited(checkUpdate(automatic: true));
   }
 
-  Future<void> prepareSpeech() async {
-    if (preparingSpeech) return;
-    preparingSpeech = true;
-    try {
-      if (!(await Permission.microphone.isGranted)) {
-        microphoneBlocked = true;
-        speechReady = false;
-        display(FaceMode.error);
-        return;
-      }
-      try {
-        speechReady = await speech.initialize(
-          onError: (e) {
-            if (!mounted || !active || settingsOpen || busy) return;
-            if (e.errorMsg.contains('permission')) {
-              microphoneBlocked = true;
-              display(FaceMode.error);
-            } else if (e.errorMsg.contains('not_available')) {
-              speechReady = false;
-              recoverSpeech();
-            } else {
-              if (!e.errorMsg.contains('no_match') &&
-                  !e.errorMsg.contains('speech_timeout')) failures++;
-              finishRecognition();
-            }
-          },
-          onStatus: (status) {
-            if (!mounted || !active || settingsOpen || busy) return;
-            if (status == 'done' || status == 'notListening')
-              finishRecognition();
-          },
-        );
-        microphoneBlocked = false;
-      } catch (_) {
-        speechReady = false;
-      }
-      if (!speechReady && !microphoneBlocked) recoverSpeech();
-      if (microphoneBlocked) display(FaceMode.error);
-    } finally {
-      preparingSpeech = false;
-    }
+  Future<void> prepareMicrophone() async {
+    microphoneBlocked = !(await Permission.microphone.isGranted);
+    microphoneReady = !microphoneBlocked;
+    if (microphoneBlocked) display(FaceMode.error);
   }
 
-  void recoverSpeech() {
-    if (!mounted || !active || settingsOpen || sleeping || microphoneBlocked)
-      return;
-    restart?.cancel();
-    restart = Timer(const Duration(seconds: 3), resumeListening);
-  }
-
-  void finishRecognition() {
-    if (!canListen) return;
-    if (settle?.isActive ?? false) return;
-    final session = listenId;
-    settle = Timer(const Duration(milliseconds: 650), () => consume(session));
-  }
-
-  Future<void> stopRecognition() async {
-    try {
-      await speech.cancel().timeout(const Duration(seconds: 2));
-    } catch (_) {/* A stalled platform call must not hold the conversation. */}
-  }
-
+  // Pauses occur only for explicit settings, backgrounding or sleep.
+  Future<void> stopLive() => live.stop();
   void schedule() {
-    restart?.cancel();
-    if (!canListen) return;
-    final delay = failures == 0 ? 250 : (400 * (1 + failures.clamp(0, 3)));
-    restart = Timer(Duration(milliseconds: delay), listen);
+    unawaited(resumeListening());
   }
 
-  Future<void> listen() async {
-    if (!canListen || speech.isListening || starting) return;
-    starting = true;
-    final session = recognitionTurn.begin();
-    listenId = session;
-    lastListenRequest = DateTime.now();
-    heard = '';
-    try {
-      display(FaceMode.listening);
-      await speech
-          .listen(
-            listenOptions: stt.SpeechListenOptions(
-              localeId: 'tr_TR',
-              listenFor: const Duration(seconds: 30),
-              pauseFor: const Duration(seconds: 2),
-              partialResults: true,
-              cancelOnError: false,
-              listenMode: stt.ListenMode.dictation,
-            ),
-            onSoundLevelChange: (level) {
-              if (mounted && mode == FaceMode.listening)
-                setState(() => energy = ((level + 2) / 12).clamp(0.0, 1.0));
-            },
-            onResult: (r) {
-              if (!canListen || session != listenId) return;
-              heard = r.recognizedWords;
-              recognitionTurn.update(session, heard);
-              if (r.finalResult) consume(session);
-            },
-          )
-          .timeout(const Duration(seconds: 4));
-      if (!canListen || session != listenId) {
-        await stopRecognition();
-        return;
-      }
-      watchdog?.cancel();
-      watchdog = Timer(const Duration(seconds: 34), () async {
-        if (session != listenId || !canListen) return;
+  Future<void> liveError(String message) async {
+    if (!mounted || !active || settingsOpen || liveErrorOpen) return;
+    liveErrorOpen = true;
+    display(FaceMode.error);
+    await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('Ses bağlantısı'),
+                content: Text(message),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Kapat')),
+                ]));
+    liveErrorOpen = false;
+  }
+
+  Future<String> liveTool(String name, Map<String, dynamic> args) async {
+    if (!mounted || !active || settingsOpen) return 'Uygulama etkin değil.';
+    switch (name) {
+      case 'capture_camera':
+        if (camera != null) return 'Kamera zaten çalışıyor.';
+        preferredLens = args['lens'] == 'front'
+            ? CameraLensDirection.front
+            : CameraLensDirection.back;
+        final id = generation;
         try {
-          await speech.stop().timeout(const Duration(seconds: 2));
-        } catch (_) {}
-        consume(session);
-      });
-      if (!speech.isListening) schedule();
-    } catch (_) {
-      failures++;
-      schedule();
-    } finally {
-      starting = false;
+          final image = await capture(id);
+          if (image == null || !valid(id)) return 'Fotoğraf alınamadı.';
+          live.sendImage(image['data'] as String);
+          return 'İstenen kamera karesi gönderildi. Yalnızca bu kareyi yorumla.';
+        } catch (_) {
+          return 'Kamera karesi alınamadı. İzinleri kontrol et.';
+        }
+      case 'open_settings':
+        unawaited(openSettings());
+        return 'Ayarlar açılıyor.';
+      case 'sleep':
+        sleeping = true;
+        unawaited(live.stop());
+        display(FaceMode.sleeping);
+        return 'Dinleme kapandı.';
+      case 'forget':
+        history.clear();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('conversation');
+        await live.stop(forget: true);
+        unawaited(resumeListening());
+        return 'Sohbet silindi.';
+      case 'check_update':
+        unawaited(checkUpdate());
+        return 'Güncelleme kontrol ediliyor.';
+      default:
+        return 'Desteklenmeyen işlem.';
     }
-  }
-
-  void consume(int session) {
-    if (!canListen || session != listenId) return;
-    settle?.cancel();
-    watchdog?.cancel();
-    final text = recognitionTurn.take(session);
-    heard = '';
-    if (text == null) {
-      schedule();
-      return;
-    }
-    failures = 0;
-    unawaited(respond(text));
   }
 
   Future<void> say(String text) async {
     if (!mounted || !active || settingsOpen) return;
-    await stopRecognition();
+    if (live.enabled) return;
     if (!mounted || !active || settingsOpen) return;
     final spokenGeneration = generation;
     speechWord = '';
@@ -364,11 +277,12 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   CameraLensDirection preferredLens = CameraLensDirection.back;
   Future<Map<String, dynamic>?> capture(int id) async {
     // Camera opens only after an explicit voice command, not during normal chat.
-    await say(
-      preferredLens == CameraLensDirection.front
-          ? 'Ön kamerayla bir kare alıyorum.'
-          : 'Arka kamerayı göstermek istediğin şeye çevir.',
-    );
+    if (!live.enabled)
+      await say(
+        preferredLens == CameraLensDirection.front
+            ? 'Ön kamerayla bir kare alıyorum.'
+            : 'Arka kamerayı göstermek istediğin şeye çevir.',
+      );
     if (!valid(id)) return null;
     final cameras = await availableCameras();
     if (cameras.isEmpty) throw StateError('no_camera');
@@ -410,195 +324,6 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     }
   }
 
-  Future<String> ask(
-    String message,
-    int id, {
-    Map<String, dynamic>? image,
-  }) async {
-    customAI = await CustomAI.load();
-    if (customAI != null) {
-      try {
-        final reply = await customAI!.ask(message, history, image: image);
-        if (valid(id)) {
-          history.add({
-            'role': 'user',
-            'text':
-                image != null ? '$message [Kamera karesi paylaşıldı.]' : message
-          });
-          history.add({'role': 'assistant', 'text': reply});
-          if (history.length > 12) history.removeRange(0, history.length - 12);
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('conversation', jsonEncode(history));
-        }
-        return reply;
-      } catch (e) {
-        return e is FormatException
-            ? e.message
-            : 'Kendi yapay zekâ bağlantın yanıt vermedi. Gelişmiş ayarlardan hazır hizmete dönebilirsin.';
-      }
-    }
-    final uri = Uri.tryParse(endpoint);
-    if (uri == null ||
-        uri.scheme != 'https' ||
-        uri.host.isEmpty ||
-        token.isEmpty) {
-      return 'Bağlantı ayarlarımı tamamlayalım. Yüzüme uzun basarak ayarları açabilirsin.';
-    }
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    inFlight = client;
-    try {
-      final request =
-          await client.postUrl(uri).timeout(const Duration(seconds: 12));
-      request.followRedirects = false;
-      request.headers.contentType = ContentType.json;
-      request.headers.set('Authorization', 'Bearer $token');
-      request.add(
-        utf8.encode(
-          jsonEncode({
-            'message': message,
-            'history': history,
-            if (image != null) 'image': image,
-          }),
-        ),
-      );
-      final response = await request.close().timeout(
-            const Duration(seconds: 32),
-          );
-      final body = await utf8.decoder
-          .bind(response)
-          .join()
-          .timeout(const Duration(seconds: 10));
-      if (response.statusCode == 401)
-        return 'Sunucu erişim parolam eşleşmiyor. Bağlantı ayarlarını kontrol edelim.';
-      if (response.statusCode == 429)
-        return 'Biraz hızlı konuştuk! Kısa bir ara verip tekrar deneyelim.';
-      if (response.statusCode == 413)
-        return 'Sunucu fotoğrafı boyutu nedeniyle kabul etmedi. Otomatik tekrar denemiyorum; dinlemeye dönüyorum.';
-      if (response.statusCode != 200)
-        return image != null
-            ? 'Kamerayı şu anda yorumlayamadım. Sunucunun kamera destekli yeni sürümde olduğundan emin olalım.'
-            : 'Şu an yapay zekâ servisine ulaşamadım. Biraz sonra yeniden deneyelim.';
-      final result = jsonDecode(body);
-      final reply = result is Map ? result['reply'] : null;
-      if (reply is! String || reply.trim().isEmpty)
-        return 'Yanıtı anlayamadım. Tekrar dener misin?';
-      if (valid(id)) {
-        history.add({
-          'role': 'user',
-          'text': image != null
-              ? '$message [Kamera karesi paylaşıldı; görüntü saklanmadı.]'
-              : message,
-        });
-        history.add({'role': 'assistant', 'text': reply});
-        if (history.length > 12) history.removeRange(0, history.length - 12);
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('conversation', jsonEncode(history));
-      }
-      return reply;
-    } catch (_) {
-      return 'Bağlantım koptu. İnterneti kontrol edip yeniden konuşabiliriz.';
-    } finally {
-      client.close(force: true);
-      if (identical(inFlight, client)) inFlight = null;
-    }
-  }
-
-  String normalize(String text) =>
-      text.toLowerCase().replaceAll('İ', 'i').replaceAll('ı', 'i');
-  Future<void> respond(String message) async {
-    if (busy || !active || settingsOpen) return;
-    busy = true;
-    final id = ++generation;
-    restart?.cancel();
-    settle?.cancel();
-    watchdog?.cancel();
-    await stopRecognition();
-    try {
-      if (!valid(id)) return;
-      final q = normalize(message);
-      if (RegExp(r'^(mimo[ ,]*)?(uyu|uyku modu|dinlen|dinlemeyi kapat)[.!?]*$')
-          .hasMatch(q)) {
-        sleeping = true;
-        await say(
-          'Biraz dinleniyorum. Yeniden konuşmak için yüzüme dokunman yeterli.',
-        );
-        if (valid(id)) display(FaceMode.sleeping);
-        return;
-      }
-      if (q.contains('geçmişi unut') ||
-          q.contains('gecmisi unut') ||
-          q.contains('sohbeti sil')) {
-        history.clear();
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('conversation');
-        await say(
-          'Bu cihazdaki sohbet geçmişini sildim. Yeni bir başlangıç yapalım.',
-        );
-        return;
-      }
-      if (q.contains('ayarlari aç') || q.contains('ayarlari ac')) {
-        await openSettings();
-        return;
-      }
-      if (q.contains('güncelle') ||
-          q.contains('guncelle') ||
-          q.contains('yeni sürümü aç') ||
-          q.contains('yeni surumu ac')) {
-        await checkUpdate();
-        return;
-      }
-      final wantsCamera = RegExp(
-        r'kameraya bak|kamerayi aç|kamerayi ac|kamera aç|kamera ac|ön kamera|on kamera|arka kamera|beni görebiliyor|beni gorebiliyor|bana bak|buna bak|şuna bak|suna bak|bunu anlat|şunu anlat|sunu anlat|ne görüyorsun|ne goruyorsun|bunu oku',
-      ).hasMatch(q);
-      Map<String, dynamic>? image;
-      if (wantsCamera) {
-        if (q.contains('ön kamera') ||
-            q.contains('on kamera') ||
-            q.contains('beni gör') ||
-            q.contains('beni gor') ||
-            q.contains('bana bak')) {
-          preferredLens = CameraLensDirection.front;
-        } else if (q.contains('arka kamera')) {
-          preferredLens = CameraLensDirection.back;
-        }
-        try {
-          image = await capture(id);
-        } catch (error) {
-          if (valid(id))
-            await say(
-              error.toString().contains('camera_missing')
-                  ? 'İstediğin kamera bu cihazda bulunmuyor.'
-                  : error.toString().contains('image_too_large')
-                      ? 'Fotoğrafı uygun boyuta indiremedim. Dinlemeye dönüyorum.'
-                      : 'Kamera karesini alamadım. Kamera iznini kontrol edelim.',
-            );
-          return;
-        }
-        if (!valid(id) || image == null) return;
-      }
-      if (!valid(id)) return;
-      setState(
-        () => mood = RegExp(r'üzgün|mutsuz|kötüyüm|sikkin').hasMatch(q)
-            ? 'gentle'
-            : RegExp(r'harika|güzel|mutlu|şaka').hasMatch(q)
-                ? 'happy'
-                : 'warm',
-      );
-      display(FaceMode.thinking);
-      final answer = await ask(message, id, image: image);
-      if (valid(id)) await say(answer);
-    } finally {
-      if (generation == id && mounted) {
-        busy = false;
-        if (active && !settingsOpen && !sleeping) {
-          display(microphoneBlocked ? FaceMode.error : FaceMode.idle);
-          schedule();
-        }
-      }
-    }
-  }
-
   Future<void> checkUpdate({bool automatic = false}) async {
     if (settingsOpen || updater.running) return;
     Map<String, dynamic>? update;
@@ -616,13 +341,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     if (!mounted || !active || settingsOpen) return;
     settingsOpen = true;
     generation++;
-    listenId++;
-    busy = false;
-    restart?.cancel();
-    settle?.cancel();
-    watchdog?.cancel();
-    inFlight?.close(force: true);
-    await stopRecognition();
+    await stopLive();
     await tts.stop();
     await neuralVoice.stop();
     if (!mounted) return;
@@ -688,44 +407,27 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   }
 
   Future<void> interrupt() async {
-    generation++;
-    recognitionTurn.cancel();
-    listenId = recognitionTurn.session;
-    busy = false;
-    heard = '';
+    if (!mounted || !active || settingsOpen) return;
     sleeping = false;
-    restart?.cancel();
-    settle?.cancel();
-    watchdog?.cancel();
-    inFlight?.close(force: true);
-    customAI?.cancel();
-    await stopRecognition();
+    if (live.enabled) {
+      await live.clearPlayback(untilTurn: true);
+      return;
+    }
     await tts.stop();
     await neuralVoice.stop();
-    if (!mounted || !active || settingsOpen) return;
-    if (!speechReady || microphoneBlocked) await prepareSpeech();
-    display(microphoneBlocked ? FaceMode.error : FaceMode.idle);
-    schedule();
+    await resumeListening();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (permissionFlow || booting) return;
-    if (state == AppLifecycleState.inactive) return;
+    // Native onStop is an additional guard; never keep recording in background.
     active = state == AppLifecycleState.resumed;
     if (!active) {
       generation++;
-      listenId++;
-      busy = false;
-      heard = '';
-      restart?.cancel();
-      settle?.cancel();
-      watchdog?.cancel();
-      speech.cancel();
+      unawaited(live.stop());
       tts.stop();
       neuralVoice.stop();
-      customAI?.cancel();
-      inFlight?.close(force: true);
       final old = camera;
       camera = null;
       old?.dispose();
@@ -736,9 +438,16 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   }
 
   Future<void> resumeListening() async {
-    if (!mounted || !active || settingsOpen || booting) return;
-    if (!speechReady || microphoneBlocked) await prepareSpeech();
-    schedule();
+    if (!mounted ||
+        !active ||
+        settingsOpen ||
+        booting ||
+        sleeping ||
+        permissionFlow) return;
+    await prepareMicrophone();
+    if (!mounted || !active || settingsOpen || sleeping || microphoneBlocked)
+      return;
+    await live.start(endpoint, token);
   }
 
   Future<void> explainPermissions({bool force = false}) async {
@@ -819,12 +528,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     if (invitation == null || !mounted) return;
     settingsOpen = true;
     generation++;
-    listenId++;
-    restart?.cancel();
-    settle?.cancel();
-    watchdog?.cancel();
-    inFlight?.close(force: true);
-    await stopRecognition();
+    await stopLive();
     await tts.stop();
     await neuralVoice.stop();
     if (!mounted) return;
@@ -891,12 +595,10 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       ),
     );
     settingsOpen = false;
-    busy = false;
     if (!mounted) return;
     if (activated == true) {
       sleeping = false;
-      await prepareSpeech();
-      await say('Cihazın etkinleştirildi. Benimle konuşabilirsin.');
+      await prepareMicrophone();
       schedule();
     } else if (endpoint.isEmpty || token.isEmpty) {
       await openSettings();
@@ -1066,16 +768,9 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     if (!mounted || settingsOpen) return;
     settingsOpen = true;
     generation++;
-    listenId++;
-    busy = false;
-    restart?.cancel();
-    settle?.cancel();
-    watchdog?.cancel();
-    await stopRecognition();
+    await stopLive();
     await tts.stop();
     await neuralVoice.stop();
-    customAI?.cancel();
-    inFlight?.close(force: true);
     if (!mounted) return;
     final url = TextEditingController(text: endpoint),
         secret = TextEditingController(text: token);
@@ -1091,20 +786,11 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Normal ekranda yalnızca yüzüm var. Ayarlara yüzüme uzun basarak dönersin. Mikrofon yalnızca uygulama açıkken dinler. “Kameraya bak” dediğinde tek kare Gemini’ye gönderilir; fotoğraf cihazda saklanmaz. Son 6 konuşma cihazda tutulur; “geçmişi unut” diyerek silebilirsin.',
+                  'Normal ekranda yalnızca yüzüm var. Ayarlara yüzüme uzun basarak dönersin. Mikrofon yalnızca uygulama açıkken dinler. “Kameraya bak” dediğinde tek kare Gemini’ye gönderilir; fotoğraf cihazda saklanmaz. Canlı sohbet geçici oturumda tutulur; “geçmişi unut” yeni oturum başlatır.',
                 ),
                 const SizedBox(height: 16),
-                SwitchListTile(
-                  title: const Text('Bulut sesi'),
-                  subtitle: const Text(
-                      'Kapalıyken telefonun sesiyle daha hızlı yanıt verir. Bulut sesi bağlantıya göre bekletebilir.'),
-                  value: cloudVoice,
-                  onChanged: (value) async {
-                    refresh(() => cloudVoice = value);
-                    final prefs = await SharedPreferences.getInstance();
-                    await prefs.setBool('cloud_voice', value);
-                  },
-                ),
+                const Text(
+                    'Canlı ses: MİMO konuşurken de mikrofon açık kalır. Araya girerek konuşmasını kesebilirsin. Sesler Gemini’ye canlı iletilir; uygulama arka plana geçtiğinde mikrofon kapanır.'),
                 TextField(
                   controller: url,
                   keyboardType: TextInputType.url,
@@ -1142,9 +828,6 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
                 onPressed: () => openDevices(context),
                 child: const Text('Davet ve cihazlar'),
               ),
-            TextButton(
-                onPressed: () => customAISettings(context),
-                child: const Text('Gelişmiş yapay zekâ')),
             if (endpoint.isNotEmpty)
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -1191,7 +874,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     }
     if (mounted && active) {
       sleeping = false;
-      if (!speechReady || microphoneBlocked) await prepareSpeech();
+      if (!microphoneReady || microphoneBlocked) await prepareMicrophone();
       schedule();
     }
   }
@@ -1202,15 +885,9 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     generation++;
     active = false;
-    restart?.cancel();
-    settle?.cancel();
-    watchdog?.cancel();
-    listeningHealth?.cancel();
-    speech.cancel();
+    unawaited(live.stop());
     tts.stop();
     neuralVoice.dispose();
-    customAI?.cancel();
-    inFlight?.close(force: true);
     camera?.dispose();
     super.dispose();
   }

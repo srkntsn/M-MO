@@ -1,13 +1,10 @@
-MİMO 0.6 — geniş insan yüzü ve daha dayanıklı sesli sohbet (Android test sürümü)
+MİMO 0.7 — canlı ses ve yeni insan yüzü
 
-- MakeHuman'ın CC0 anatomik baş temelinden düzenlenmiş geniş yüz: gerçek burun, yanak, çene, göz kapakları ve dudak topolojisi; ayrı göz, iris, dil ve üst-alt diş geometrisi.
-- Blender 4.3.2 ile aynı modelden alınan gerçek Cycles render’ları indirmelere eklendi. Uygulama içindeki glTF modeli hareketlidir; bu bir fotogerçekçi insan veya tam fonem senkronizasyonu iddiası değildir.
-- Çene ve göz kapağı hareketlerinin mobil dışa aktarmada kaybolmasını engelleyen model doğrulaması.
-- Model yüklenirken boş ekran yerine gerçek render; yüzün JavaScript güncellemelerinde birikmeyi önleyen sınırlandırma.
-- Varsayılan hızlı cihaz sesi. Yüze uzun basılan ayarlarda Bulut sesi isteğe bağlıdır; başarısız/geciken ses üretimi ve oynatımı sınırlanır ve cihaz sesine dönülür.
-- Sessizlikten sonra dinlemeyi yeniden başlatan kontrol; geç gelen/eski ve çift sonuçların ayıklanması; geçici ses hizmeti hatasından toparlanma.
-- Eksik Gemini modeli için başarılı alternatif seçimi 30 dakika bellekte tutulur; her konuşmada katalog isteği tekrarlanmaz. Backend güncellemesi gerektirir; mevcut Secrets değiştirilmez.
+- Android'in kısa süreli konuşma tanıma döngüsü kaldırıldı. Mikrofon tek oturumda sürekli ses iletir; MİMO konuşurken de kullanıcı dinlenir.
+- Gemini Live üzerinden ses doğrudan üretilir. Kullanıcı araya girdiğinde bekleyen ses hemen temizlenir. Destekleyen telefonlarda akustik yankı giderme ve gürültü bastırma etkinleştirilir.
+- Arka plana geçildiğinde veya uyku komutunda mikrofon kapanır. Bağlantı hataları sınırlı tekrar denenir; hata halinde görünür açıklama sunulur.
+- Yeni CC0 Vitruvian anatomik yüz: cilt/saç/göz kaplamaları, koordineli dudak/çene/diş/dil ve göz kapağı hareketleri. Ağız, çalınan sesin seviyesine göre hareket eder; fonem eşlemesi değildir.
+- Kamera yalnızca açık kullanıcı isteğiyle tek kare paylaşır. Davetler ve mevcut erişim ayarları korunur.
+- Yeni sürümler uygulama içindeki güncelleme penceresinden yüklenir; Android'in kurulum onayı gerekir.
 
-Mevcut uygulamayı kaldırmayın: aynı imzalı APK’yı üzerine kurun. Uygulama içindeki “güncelle” komutu da kullanılabilir. İmza uyuşmazlığı varsa ayarları yedeklemeden uygulamayı kaldırmayın.
-
-Derleme, analiz, birim ve dışa aktarma kontrolleri gerçek telefondaki mikrofon/kamera testinin yerine geçmez. Android’in ses tanıması kısa oturumlarla çalışır; bu sürüm tam çift yönlü canlı ses değildir. Gemini’nin ağ/kota/model koşulları geçerlidir.
+Gereksinim: sunucunun mevcut Gemini anahtarıyla Live modeline erişebilmesi. Telefonda hoparlör yankısı, Bluetooth yönlendirmesi ve gerçek konuşma gecikmesi için cihaz testi gerekir. Bu sürüm bunların tüm cihazlarda doğrulandığı iddiasını taşımaz.

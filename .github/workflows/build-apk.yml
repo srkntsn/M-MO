@@ -35,6 +35,7 @@ jobs:
         run: |
           curl -fsSL https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz -o "$RUNNER_TEMP/blender.tar.xz"
           tar --no-same-owner -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP"
+          python3 scripts/fetch_avatar_sources.py
           "$RUNNER_TEMP/blender-4.3.2-linux-x64/blender" -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output assets/avatar
           python3 scripts/validate_avatar.py assets/avatar/mimo-head.glb
           test -s assets/avatar/mimo-head.glb
