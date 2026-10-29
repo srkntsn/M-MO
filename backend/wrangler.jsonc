@@ -3,5 +3,9 @@
   "name": "mimo-ai-server",
   "main": "worker.js",
   "compatibility_date": "2026-10-29",
-  "keep_vars": true
+  "keep_vars": true,
+  "durable_objects": {
+    "bindings": [{"name":"MIMO_DEVICES", "class_name":"DeviceRegistry"}]
+  },
+  "migrations": [{"tag":"mimo-devices-v1", "new_sqlite_classes":["DeviceRegistry"]}]
 }

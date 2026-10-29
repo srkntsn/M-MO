@@ -80,8 +80,16 @@ class _FacePainter extends CustomPainter {
     );
   }
 
-  void triangle(_V a, _V b, _V c, Color material,
-      {bool luminous = false, _V? na, _V? nb, _V? nc}) {
+  void triangle(
+    _V a,
+    _V b,
+    _V c,
+    Color material, {
+    bool luminous = false,
+    _V? na,
+    _V? nb,
+    _V? nc,
+  }) {
     a = rotate(a);
     b = rotate(b);
     c = rotate(c);
@@ -98,20 +106,33 @@ class _FacePainter extends CustomPainter {
           .round()
           .clamp(0, 255);
       return Color.fromARGB(
-          255, channel(material.r), channel(material.g), channel(material.b));
+        255,
+        channel(material.r),
+        channel(material.g),
+        channel(material.b),
+      );
     }
 
-    faces.add(_Triangle(
+    faces.add(
+      _Triangle(
         a,
         b,
         c,
         shade(na == null ? normal : rotate(na)),
         shade(nb == null ? normal : rotate(nb)),
-        shade(nc == null ? normal : rotate(nc))));
+        shade(nc == null ? normal : rotate(nc)),
+      ),
+    );
   }
 
-  void ellipsoid(_V center, _V radius, Color color,
-      {int rings = 16, int segments = 28, bool luminous = false}) {
+  void ellipsoid(
+    _V center,
+    _V radius,
+    Color color, {
+    int rings = 16,
+    int segments = 28,
+    bool luminous = false,
+  }) {
     final points = <_V>[], normals = <_V>[];
     for (var i = 0; i <= rings; i++) {
       for (var j = 0; j <= segments; j++) {
@@ -129,10 +150,26 @@ class _FacePainter extends CustomPainter {
             b = a + 1,
             c = a + segments + 1,
             d = c + 1;
-        triangle(points[a], points[b], points[c], color,
-            luminous: luminous, na: normals[a], nb: normals[b], nc: normals[c]);
-        triangle(points[b], points[d], points[c], color,
-            luminous: luminous, na: normals[b], nb: normals[d], nc: normals[c]);
+        triangle(
+          points[a],
+          points[b],
+          points[c],
+          color,
+          luminous: luminous,
+          na: normals[a],
+          nb: normals[b],
+          nc: normals[c],
+        );
+        triangle(
+          points[b],
+          points[d],
+          points[c],
+          color,
+          luminous: luminous,
+          na: normals[b],
+          nb: normals[d],
+          nc: normals[c],
+        );
       }
     }
   }
@@ -151,8 +188,11 @@ class _FacePainter extends CustomPainter {
       positions.addAll([project(f.a), project(f.b), project(f.c)]);
       colors.addAll([f.ca, f.cb, f.cc]);
     }
-    final mesh =
-        ui.Vertices(ui.VertexMode.triangles, positions, colors: colors);
+    final mesh = ui.Vertices(
+      ui.VertexMode.triangles,
+      positions,
+      colors: colors,
+    );
     canvas.drawVertices(mesh, BlendMode.srcOver, Paint()..color = Colors.white);
     mesh.dispose();
     faces.clear();
@@ -255,11 +295,12 @@ class _FacePainter extends CustomPainter {
     _V lip(int i, int j) {
       final a = 2 * math.pi * i / 48, b = 2 * math.pi * j / 8;
       return _V(
-          (.25 + .012 * math.cos(b)) * math.cos(a),
-          .35 +
-              .08 * math.pow(math.sin(a), 2) +
-              (.012 + opening + .012 * math.cos(b)) * math.sin(a),
-          .90 + .012 * math.sin(b));
+        (.25 + .012 * math.cos(b)) * math.cos(a),
+        .35 +
+            .08 * math.pow(math.sin(a), 2) +
+            (.012 + opening + .012 * math.cos(b)) * math.sin(a),
+        .90 + .012 * math.sin(b),
+      );
     }
 
     for (var i = 0; i < 48; i++) {

@@ -14,3 +14,5 @@ web/
 .dev.vars*
 .wrangler/
 __pycache__/
+avatar-build/
+assets/avatar/*.glb
