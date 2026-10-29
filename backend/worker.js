@@ -1,4 +1,5 @@
 import {authorized, deviceRoutes} from './devices.js';
+import {speechResponse} from './speech.js';
 export {DeviceRegistry} from './devices.js';
 // Existing GEMINI_API_KEY, MIMO_ACCESS_TOKEN and optional GEMINI_MODEL bindings are preserved.
 const MAX_BODY = 1500000;
@@ -30,7 +31,8 @@ export default {
   async fetch(request, env) {
     const deviceResponse = await deviceRoutes(request, env);
     if (deviceResponse) return deviceResponse;
-    if (new URL(request.url).pathname !== '/') return new Response('Not found', {status:404});
+    const path=new URL(request.url).pathname;
+    if (!['/','/speech'].includes(path)) return new Response('Not found', {status:404});
     if (request.method !== 'POST') return new Response('Not found', {status:404});
     if (!(await authorized(request, env))) {
       return Response.json({error:'Unauthorized'}, {status:401});
@@ -40,6 +42,7 @@ export default {
     try { data = JSON.parse(await readBody(request)); }
     catch (e) { return Response.json({error:e.message === 'too_large' ? 'Too large' : 'Bad request'}, {status:e.message === 'too_large' ? 413 : 400}); }
     if (!data || typeof data !== 'object' || Array.isArray(data)) return Response.json({error:'Bad request'}, {status:400});
+    if (path==='/speech') return speechResponse(typeof data.text==='string' ? data.text.trim() : '',env);
     const message = typeof data.message === 'string' ? data.message.trim().slice(0,1800) : '';
     if (!message) return Response.json({error:'Empty message'}, {status:400});
     const parts = [{text:message}];

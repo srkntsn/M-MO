@@ -41,10 +41,10 @@ void main() {
   });
   test('activation accepts only bounded codes and clean HTTPS origins', () {
     Uri link(String server, String code) => Uri(
-      scheme: 'mimo',
-      host: 'activate',
-      queryParameters: {'server': server, 'invite': code},
-    );
+          scheme: 'mimo',
+          host: 'activate',
+          queryParameters: {'server': server, 'invite': code},
+        );
     expect(Invitation.parse(link('https://worker.test', 'a' * 64)), isNotNull);
     for (final server in [
       'http://worker.test',

@@ -1,0 +1,64 @@
+package {{PACKAGE}}
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.content.pm.PackageManager
+import androidx.core.content.FileProvider
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.security.MessageDigest
+
+class MainActivity: FlutterActivity() {
+    private val playBuild = {{PLAY_BUILD}}
+    private fun fromPlay(): Boolean {
+        if (playBuild) return true
+        val installer = if (Build.VERSION.SDK_INT >= 30)
+            packageManager.getInstallSourceInfo(packageName).installingPackageName
+        else @Suppress("DEPRECATION") packageManager.getInstallerPackageName(packageName)
+        return installer == "com.android.vending"
+    }
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mimo/update").setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "fromPlay" -> result.success(fromPlay())
+                    "canInstall" -> result.success(Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls())
+                    "openInstallSettings" -> {
+                        if (Build.VERSION.SDK_INT >= 26) startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+                        result.success(null)
+                    }
+                    "installTestUpdate" -> {
+                        check(!fromPlay()) { "Play builds update through Google Play" }
+                        check(Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()) { "Install permission required" }
+                        val apk = File(cacheDir, "mimo-updates/mimo.apk")
+                        check(apk.exists()) { "Update not downloaded" }
+                        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+                        @Suppress("DEPRECATION")
+                        val incoming = packageManager.getPackageArchiveInfo(apk.path, flags) ?: error("Invalid APK")
+                        @Suppress("DEPRECATION")
+                        val current = packageManager.getPackageInfo(packageName, flags)
+                        check(incoming.packageName == packageName) { "Wrong application" }
+                        val incomingVersion = if (Build.VERSION.SDK_INT >= 28) incoming.longVersionCode else @Suppress("DEPRECATION") incoming.versionCode.toLong()
+                        val currentVersion = if (Build.VERSION.SDK_INT >= 28) current.longVersionCode else @Suppress("DEPRECATION") current.versionCode.toLong()
+                        check(incomingVersion > currentVersion) { "No newer version" }
+                        fun signers(info: android.content.pm.PackageInfo): Set<String> {
+                            val signatures = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else @Suppress("DEPRECATION") info.signatures
+                            return signatures?.map { signature -> MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).joinToString("") { "%02x".format(it) } }?.toSet() ?: emptySet()
+                        }
+                        val trusted = signers(current)
+                        check(trusted.isNotEmpty() && trusted == signers(incoming)) { "Update signing identity differs; settings were preserved" }
+                        val uri = FileProvider.getUriForFile(this, "$packageName.updates", apk)
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            } catch (e: Exception) { result.error("UPDATE_ERROR", e.message, null) }
+        }
+    }
+}

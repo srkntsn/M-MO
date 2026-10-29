@@ -9,14 +9,16 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:url_launcher/url_launcher.dart';
 
 import 'face.dart';
 import 'invitations.dart';
 import 'camera_image.dart';
+import 'avatar.dart';
+import 'neural_voice.dart';
+import 'updater.dart';
+import 'providers.dart';
 
 final appLinks = AppLinks();
 
@@ -29,12 +31,12 @@ class MimoApp extends StatelessWidget {
   const MimoApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'MİMO',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData.dark(useMaterial3: true)
-        .copyWith(scaffoldBackgroundColor: const Color(0xFF060D1A)),
-    home: const MimoHome(),
-  );
+        title: 'MİMO',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(useMaterial3: true)
+            .copyWith(scaffoldBackgroundColor: const Color(0xFF060D1A)),
+        home: const MimoHome(),
+      );
 }
 
 class MimoHome extends StatefulWidget {
@@ -46,6 +48,9 @@ class MimoHome extends StatefulWidget {
 class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   final speech = stt.SpeechToText();
   final tts = FlutterTts();
+  final neuralVoice = NeuralVoice();
+  final updater = AppUpdater();
+  CustomAI? customAI;
   final history = <Map<String, String>>[];
   final inviteAccess = InviteAccess();
   StreamSubscription<Uri>? linkSubscription;
@@ -67,6 +72,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   HttpClient? inFlight;
   CameraController? camera;
   String heard = '';
+  String speechWord = '';
   bool get canListen =>
       mounted &&
       active &&
@@ -75,6 +81,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       !busy &&
       !microphoneBlocked &&
       speechReady &&
+      !booting &&
+      !permissionFlow &&
       mode != FaceMode.speaking;
   void display(FaceMode value) {
     if (mounted) setState(() => mode = value);
@@ -128,7 +136,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     }
     await tts.setLanguage('tr-TR');
     await tts.setSpeechRate(.49);
-    await tts.setPitch(1.04);
+    await tts.setPitch(1.0);
     await tts.awaitSpeakCompletion(true);
     final voice = prefs.getString('voice');
     if (voice != null) {
@@ -144,7 +152,10 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     }
     tts.setProgressHandler((text, start, end, word) {
       if (mounted && mode == FaceMode.speaking)
-        setState(() => energy = .5 + (word.length % 5) / 10);
+        setState(() {
+          speechWord = word;
+          energy = .5 + (word.length % 5) / 10;
+        });
     });
     if (!mounted) return;
     await explainPermissions();
@@ -166,6 +177,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         'Merhaba, buradayım! Benimle doğrudan konuşabilirsin. Konuşmamı kesmek için yüzüme dokun. Kamera için, kameraya bak demen yeterli.',
       );
       schedule();
+      unawaited(checkUpdate(automatic: true));
     }
   }
 
@@ -186,8 +198,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
             display(FaceMode.error);
           } else {
             if (!e.errorMsg.contains('no_match') &&
-                !e.errorMsg.contains('speech_timeout'))
-              failures++;
+                !e.errorMsg.contains('speech_timeout')) failures++;
             schedule();
           }
         },
@@ -283,8 +294,18 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     await speech.cancel();
     if (!mounted || !active || settingsOpen) return;
     final spokenGeneration = generation;
+    speechWord = '';
+    energy = 0;
     display(FaceMode.speaking);
     try {
+      final server = Uri.tryParse(endpoint);
+      if (server != null && token.isNotEmpty) {
+        final played = await neuralVoice.speak(server, token, text, (level) {
+          if (valid(spokenGeneration) && mode == FaceMode.speaking)
+            setState(() => energy = level);
+        });
+        if (!valid(spokenGeneration) || played) return;
+      }
       await tts.speak(text).timeout(const Duration(seconds: 65));
     } catch (_) {
       await tts.stop();
@@ -348,6 +369,28 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     int id, {
     Map<String, dynamic>? image,
   }) async {
+    customAI = await CustomAI.load();
+    if (customAI != null) {
+      try {
+        final reply = await customAI!.ask(message, history, image: image);
+        if (valid(id)) {
+          history.add({
+            'role': 'user',
+            'text':
+                image != null ? '$message [Kamera karesi paylaşıldı.]' : message
+          });
+          history.add({'role': 'assistant', 'text': reply});
+          if (history.length > 12) history.removeRange(0, history.length - 12);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('conversation', jsonEncode(history));
+        }
+        return reply;
+      } catch (e) {
+        return e is FormatException
+            ? e.message
+            : 'Kendi yapay zekâ bağlantın yanıt vermedi. Gelişmiş ayarlardan hazır hizmete dönebilirsin.';
+      }
+    }
     final uri = Uri.tryParse(endpoint);
     if (uri == null ||
         uri.scheme != 'https' ||
@@ -359,9 +402,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       ..connectionTimeout = const Duration(seconds: 10);
     inFlight = client;
     try {
-      final request = await client
-          .postUrl(uri)
-          .timeout(const Duration(seconds: 12));
+      final request =
+          await client.postUrl(uri).timeout(const Duration(seconds: 12));
       request.followRedirects = false;
       request.headers.contentType = ContentType.json;
       request.headers.set('Authorization', 'Bearer $token');
@@ -375,8 +417,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         ),
       );
       final response = await request.close().timeout(
-        const Duration(seconds: 55),
-      );
+            const Duration(seconds: 55),
+          );
       final body = await utf8.decoder
           .bind(response)
           .join()
@@ -453,22 +495,11 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         await openSettings();
         return;
       }
-      if (q.contains('güncelleme') || q.contains('guncelleme')) {
+      if (q.contains('güncelle') ||
+          q.contains('guncelle') ||
+          q.contains('yeni sürümü aç') ||
+          q.contains('yeni surumu ac')) {
         await checkUpdate();
-        return;
-      }
-      if (q.contains('yeni sürümü aç') ||
-          q.contains('yeni surumu ac') ||
-          q == 'mimo güncelle' ||
-          q == 'güncelle') {
-        final opened = await launchUrl(
-          Uri.parse('https://github.com/srkntsn/M-MO/releases/latest'),
-          mode: LaunchMode.externalApplication,
-        );
-        if (!opened)
-          await say(
-            'İndirme sayfasını açamadım. GitHub üzerindeki MİMO sürümlerine bakabilirsin.',
-          );
         return;
       }
       final wantsCamera = RegExp(
@@ -493,8 +524,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
               error.toString().contains('camera_missing')
                   ? 'İstediğin kamera bu cihazda bulunmuyor.'
                   : error.toString().contains('image_too_large')
-                  ? 'Fotoğrafı uygun boyuta indiremedim. Dinlemeye dönüyorum.'
-                  : 'Kamera karesini alamadım. Kamera iznini kontrol edelim.',
+                      ? 'Fotoğrafı uygun boyuta indiremedim. Dinlemeye dönüyorum.'
+                      : 'Kamera karesini alamadım. Kamera iznini kontrol edelim.',
             );
           return;
         }
@@ -505,8 +536,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         () => mood = RegExp(r'üzgün|mutsuz|kötüyüm|sikkin').hasMatch(q)
             ? 'gentle'
             : RegExp(r'harika|güzel|mutlu|şaka').hasMatch(q)
-            ? 'happy'
-            : 'warm',
+                ? 'happy'
+                : 'warm',
       );
       display(FaceMode.thinking);
       final answer = await ask(message, id, image: image);
@@ -522,45 +553,91 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> checkUpdate() async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  Future<void> checkUpdate({bool automatic = false}) async {
+    if (settingsOpen || updater.running) return;
+    Map<String, dynamic>? update;
     try {
-      final request = await client
-          .getUrl(
-            Uri.parse(
-              'https://api.github.com/repos/srkntsn/M-MO/releases/latest',
-            ),
-          )
-          .timeout(const Duration(seconds: 10));
-      request.headers.set('User-Agent', 'MIMO-Android');
-      final response = await request.close().timeout(
-        const Duration(seconds: 10),
-      );
-      if (response.statusCode != 200) {
-        await say('Henüz yayımlanmış yeni bir sürüm bulamadım.');
-        return;
-      }
-      final release = jsonDecode(await utf8.decoder.bind(response).join());
-      final tag = release['tag_name']?.toString() ?? '';
-      final latest =
-          int.tryParse(
-            RegExp(r'build\.(\d+)$').firstMatch(tag)?.group(1) ?? '',
-          ) ??
-          0;
-      final current = await PackageInfo.fromPlatform();
-      if (latest > (int.tryParse(current.buildNumber) ?? 0)) {
-        await say(
-          'Yeni sürüm hazır! Yeni sürümü aç dersen indirme sayfasını açarım. Android kurulumu senin onayını isteyecek.',
-        );
-      } else {
-        await say('Şu an son yayımlanan sürümü kullanıyorsun.');
-      }
+      update = await updater.check();
     } catch (_) {
-      await say(
-        'Güncellemeleri şu anda kontrol edemedim. Biraz sonra tekrar deneyelim.',
-      );
-    } finally {
-      client.close(force: true);
+      if (!automatic)
+        await say('Güncelleme kontrol edilemedi. İnterneti kontrol edelim.');
+      return;
+    }
+    if (update == null) {
+      if (!automatic) await say('Yayımlanmış daha yeni bir sürüm bulunmuyor.');
+      return;
+    }
+    if (!mounted || !active || settingsOpen) return;
+    settingsOpen = true;
+    generation++;
+    listenId++;
+    busy = false;
+    restart?.cancel();
+    settle?.cancel();
+    watchdog?.cancel();
+    inFlight?.close(force: true);
+    await speech.cancel();
+    await tts.stop();
+    await neuralVoice.stop();
+    if (!mounted) return;
+    bool working = false;
+    double progress = 0;
+    String? error;
+    await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => StatefulBuilder(
+            builder: (context, refresh) => AlertDialog(
+                  title: const Text('MİMO güncellemesi'),
+                  content: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(update!['play'] == true
+                        ? 'Google Play yeni sürümü indirip kuracak.'
+                        : 'Yeni test sürümü uygulama içinden indirilecek. Android kurulum onayını isteyecek; ilk kez bu kaynaktan kurarken izin vermen gerekebilir.'),
+                    if (working)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: LinearProgressIndicator(
+                              value: progress > 0 ? progress : null)),
+                    if (error != null)
+                      Text(error!,
+                          style: const TextStyle(color: Colors.orange)),
+                  ]),
+                  actions: [
+                    TextButton(
+                        onPressed:
+                            working ? null : () => Navigator.pop(context),
+                        child: const Text('Şimdi değil')),
+                    FilledButton(
+                        onPressed: working
+                            ? null
+                            : () async {
+                                refresh(() {
+                                  working = true;
+                                  error = null;
+                                });
+                                try {
+                                  await updater.install(update!, (value) {
+                                    if (context.mounted)
+                                      refresh(() => progress = value);
+                                  });
+                                  if (context.mounted) Navigator.pop(context);
+                                } catch (e) {
+                                  if (context.mounted)
+                                    refresh(() {
+                                      working = false;
+                                      error = e is FormatException
+                                          ? e.message
+                                          : 'Kurulum başlatılamadı. Mevcut uygulama ve ayarların korundu.';
+                                    });
+                                }
+                              },
+                        child: const Text('Güncelle')),
+                  ],
+                )));
+    settingsOpen = false;
+    if (mounted && active) {
+      display(FaceMode.idle);
+      await resumeListening();
     }
   }
 
@@ -574,8 +651,10 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     settle?.cancel();
     watchdog?.cancel();
     inFlight?.close(force: true);
+    customAI?.cancel();
     await speech.cancel();
     await tts.stop();
+    await neuralVoice.stop();
     if (!mounted || !active || settingsOpen) return;
     if (!speechReady || microphoneBlocked) await prepareSpeech();
     display(microphoneBlocked ? FaceMode.error : FaceMode.idle);
@@ -597,6 +676,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       watchdog?.cancel();
       speech.cancel();
       tts.stop();
+      neuralVoice.stop();
+      customAI?.cancel();
       inFlight?.close(force: true);
       final old = camera;
       camera = null;
@@ -698,6 +779,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     inFlight?.close(force: true);
     await speech.cancel();
     await tts.stop();
+    await neuralVoice.stop();
     if (!mounted) return;
     String? error;
     bool working = false;
@@ -749,7 +831,9 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
                         if (context.mounted)
                           refresh(() {
                             working = false;
-                            error = e is FormatException ? e.message : 'Bağlantı kurulamadı. Aynı bağlantıyla tekrar deneyebilirsin.';
+                            error = e is FormatException
+                                ? e.message
+                                : 'Bağlantı kurulamadı. Aynı bağlantıyla tekrar deneyebilirsin.';
                           });
                       }
                     },
@@ -942,6 +1026,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     watchdog?.cancel();
     await speech.cancel();
     await tts.stop();
+    await neuralVoice.stop();
+    customAI?.cancel();
     inFlight?.close(force: true);
     if (!mounted) return;
     final url = TextEditingController(text: endpoint),
@@ -998,6 +1084,9 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
                 onPressed: () => openDevices(context),
                 child: const Text('Davet ve cihazlar'),
               ),
+            TextButton(
+                onPressed: () => customAISettings(context),
+                child: const Text('Gelişmiş yapay zekâ')),
             if (endpoint.isNotEmpty)
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -1060,6 +1149,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     watchdog?.cancel();
     speech.cancel();
     tts.stop();
+    neuralVoice.dispose();
+    customAI?.cancel();
     inFlight?.close(force: true);
     camera?.dispose();
     super.dispose();
@@ -1067,25 +1158,27 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: Semantics(
-      label: mode == FaceMode.listening
-          ? 'MİMO dinliyor'
-          : mode == FaceMode.speaking
-          ? 'MİMO konuşuyor'
-          : mode == FaceMode.camera
-          ? 'MİMO kameraya bakıyor'
-          : mode == FaceMode.sleeping
-          ? 'MİMO dinleniyor'
-          : 'MİMO',
-      hint: 'Konuşmasını kesmek veya uyandırmak için dokun. Bağlantı ayarları için uzun bas.',
-      onTap: interrupt,
-      onLongPress: openSettings,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: interrupt,
-        onLongPress: openSettings,
-        child: MimoFace(mode: mode, energy: energy, mood: mood),
-      ),
-    ),
-  );
+        body: Semantics(
+          label: mode == FaceMode.listening
+              ? 'MİMO dinliyor'
+              : mode == FaceMode.speaking
+                  ? 'MİMO konuşuyor'
+                  : mode == FaceMode.camera
+                      ? 'MİMO kameraya bakıyor'
+                      : mode == FaceMode.sleeping
+                          ? 'MİMO dinleniyor'
+                          : 'MİMO',
+          hint:
+              'Konuşmasını kesmek veya uyandırmak için dokun. Bağlantı ayarları için uzun bas.',
+          onTap: interrupt,
+          onLongPress: openSettings,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: interrupt,
+            onLongPress: openSettings,
+            child: BlenderAvatar(
+                mode: mode, energy: energy, mood: mood, word: speechWord),
+          ),
+        ),
+      );
 }

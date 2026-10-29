@@ -34,11 +34,11 @@ class _MimoFaceState extends State<MimoFace>
 
   @override
   Widget build(BuildContext context) => RepaintBoundary(
-    child: CustomPaint(
-      painter: _FacePainter(clock, widget.mode, widget.energy, widget.mood),
-      size: Size.infinite,
-    ),
-  );
+        child: CustomPaint(
+          painter: _FacePainter(clock, widget.mode, widget.energy, widget.mood),
+          size: Size.infinite,
+        ),
+      );
 }
 
 class _V {
@@ -63,7 +63,7 @@ class _Triangle {
 
 class _FacePainter extends CustomPainter {
   _FacePainter(this.clock, this.mode, this.energy, this.mood)
-    : super(repaint: clock);
+      : super(repaint: clock);
   final Animation<double> clock;
   final FaceMode mode;
   final double energy;
@@ -212,8 +212,8 @@ class _FacePainter extends CustomPainter {
     final accent = mode == FaceMode.camera
         ? const Color(0xFF79F4B3)
         : mode == FaceMode.error
-        ? const Color(0xFFFFB980)
-        : const Color(0xFF63DFFF);
+            ? const Color(0xFFFFB980)
+            : const Color(0xFF63DFFF);
     canvas.drawCircle(
       center,
       scale * 1.5,
@@ -253,8 +253,8 @@ class _FacePainter extends CustomPainter {
     final blink = asleep
         ? .06
         : cycle > 4.48
-        ? .08 + (.92 * ((cycle - 4.59).abs() / .11).clamp(0.0, 1.0))
-        : 1.0;
+            ? .08 + (.92 * ((cycle - 4.59).abs() / .11).clamp(0.0, 1.0))
+            : 1.0;
     final eyeHeight = (mood == 'happy' ? .23 : .29) * blink;
     for (final x in [-.36, .36]) {
       ellipsoid(

@@ -19,8 +19,7 @@ class Invitation {
         server.hasQuery ||
         server.hasFragment ||
         (server.path.isNotEmpty && server.path != '/') ||
-        !RegExp(r'^[a-f0-9]{64}$').hasMatch(code))
-      return null;
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(code)) return null;
     return Invitation(server.replace(path: '/'), code);
   }
 }
@@ -38,9 +37,9 @@ class InviteAccess {
   }
 
   Future<void> save(String endpoint, String token) => storage.write(
-    key: 'mimo_credential',
-    value: jsonEncode({'endpoint': endpoint, 'token': token}),
-  );
+        key: 'mimo_credential',
+        value: jsonEncode({'endpoint': endpoint, 'token': token}),
+      );
   Future<Map<String, dynamic>> request(
     Uri server,
     String path, {

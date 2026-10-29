@@ -30,6 +30,12 @@ jobs:
         run: flutter create --platforms android --project-name mimo_ai --org com.mimoai .
       - name: Configure permissions
         run: python3 scripts/configure_android.py
+      - name: Build Blender avatar asset
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy
+          blender -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output assets/avatar --export-only
+          test -s assets/avatar/mimo-head.glb
       - name: Install dependencies
         run: flutter pub get
       - name: Analyze application

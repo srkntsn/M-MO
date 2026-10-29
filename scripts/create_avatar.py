@@ -128,12 +128,29 @@ sphere('ForeheadLight',(0,-.60,1.00),(.027,.018,.027),lightmat,24,16)
 
 # Export only the head; lighting and camera remain in the editable .blend.
 avatar=[o for o in bpy.context.scene.objects if o.type in {'MESH','EMPTY'}]
+scene=bpy.context.scene
+scene.frame_start=1; scene.frame_end=25; scene.render.fps=24
+for o in avatar:
+    if o.type=='MESH' and o.data.shape_keys:
+        keys=o.data.shape_keys
+        key=keys.key_blocks.get('jawOpen')
+        if not key: continue
+        for frame,value in [(1,0),(13,1),(25,0)]:
+            key.value=value; key.keyframe_insert(data_path='value',frame=frame)
+        action=keys.animation_data.action
+        track=keys.animation_data.nla_tracks.new(); track.name='MimoSpeech'
+        track.strips.new('MimoSpeech',1,action)
+        keys.animation_data.action=None
+scene.frame_set(1)
 for o in bpy.context.scene.objects: o.select_set(o in avatar)
-bpy.ops.export_scene.gltf(filepath=str(out/'mimo-head.glb'),export_format='GLB',use_selection=True,export_morph=True,export_animations=False)
+bpy.ops.export_scene.gltf(filepath=str(out/'mimo-head.glb'),export_format='GLB',use_selection=True,export_morph=True,export_animations=True)
+if '--export-only' in args:
+    print('MIMO_AVATAR_EXPORTED',str(out))
+    sys.exit(0)
 
 scene=bpy.context.scene
 scene.render.engine='CYCLES'; scene.cycles.samples=48
-scene.cycles.use_denoising=True
+scene.cycles.use_denoising=getattr(bpy.app.build_options,'openimagedenoise',False)
 scene.render.resolution_x=720; scene.render.resolution_y=1080; scene.render.resolution_percentage=100
 scene.world.color=(.045,.065,.085)
 scene.render.image_settings.file_format='PNG'
@@ -157,7 +174,9 @@ bpy.ops.render.render(write_still=True)
 for o in avatar:
     if o.type=='MESH' and o.data.shape_keys:
         key=o.data.shape_keys.key_blocks.get('jawOpen')
-        if key: key.value=.7
+        if key:
+            o.data.shape_keys.animation_data_clear()
+            key.value=.7
 scene.render.filepath=str(out/'mimo-speaking.png')
 bpy.ops.render.render(write_still=True)
 print('MIMO_AVATAR_READY',str(out))
