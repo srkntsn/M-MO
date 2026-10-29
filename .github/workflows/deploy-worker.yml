@@ -30,12 +30,18 @@ jobs:
             echo 'ready=false' >> "$GITHUB_OUTPUT"
             echo '### Worker deploy skipped: Cloudflare connection secrets are not configured.' >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Normalize copied deployment credentials without exposing them
+        if: steps.connection.outputs.ready == 'true'
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node backend/deploy-token.mjs
       - name: Deploy existing Worker, preserve its secrets
         if: steps.connection.outputs.ready == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ env.MIMO_DEPLOY_TOKEN }}
+          accountId: ${{ env.MIMO_DEPLOY_ACCOUNT }}
           workingDirectory: backend
           wranglerVersion: '4'
           command: deploy --config wrangler.jsonc --keep-vars
