@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['backend/worker.js', 'backend/wrangler.jsonc', '.github/workflows/deploy-worker.yml']
+    paths: ['backend/**', '.github/workflows/deploy-worker.yml']
 permissions:
   contents: read
 concurrency:
@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test backend/worker.test.mjs
+      - run: node --test backend/*.test.mjs
       - name: Check deployment connection
         id: connection
         env:

@@ -33,18 +33,20 @@ test('invitation atomically binds one device; retry is idempotent; revocation st
  const code=new URL(invitation.url).hash.slice(1);
  assert.equal(code.length,64); assert.ok(!invitation.url.includes('owner-test'));
  const results=await Promise.all([secret,other].map(deviceToken=>deviceRoutes(req('/auth/redeem',{code,deviceToken}),env)));
- assert.deepEqual(results.map(x=>x.status),[200,409]);
- const {id}=await results[0].json();
- assert.equal((await deviceRoutes(req('/auth/redeem',{code,deviceToken:secret}),env)).status,200);
- assert.equal(JSON.stringify([...storage.data]).includes(secret),false);
- const auth = new Request('https://worker.test/',{headers:{Authorization:'Bearer '+secret}});
+ assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);
+ const winner=results.findIndex(x=>x.status===200);
+ const winningSecret=[secret,other][winner], losingSecret=[secret,other][1-winner];
+ const {id}=await results[winner].json();
+ assert.equal((await deviceRoutes(req('/auth/redeem',{code,deviceToken:winningSecret}),env)).status,200);
+ assert.equal(JSON.stringify([...storage.data]).includes(winningSecret),false);
+ const auth = new Request('https://worker.test/',{headers:{Authorization:'Bearer '+winningSecret}});
  assert.equal(await authorized(auth,env),true);
- assert.equal(await authorized(new Request('https://worker.test/',{headers:{Authorization:'Bearer '+other}}),env),false);
+ assert.equal(await authorized(new Request('https://worker.test/',{headers:{Authorization:'Bearer '+losingSecret}}),env),false);
  const listing=await (await deviceRoutes(req('/admin/devices',null,true),env)).json();
  assert.equal(listing.devices[0].label,'Ortağım'); assert.equal(JSON.stringify(listing).includes('hash'),false);
  assert.equal((await deviceRoutes(req('/admin/devices/revoke',{id},true),env)).status,200);
  assert.equal(await authorized(auth,env),false);
- assert.equal((await deviceRoutes(req('/auth/redeem',{code,deviceToken:secret}),env)).status,409);
+ assert.equal((await deviceRoutes(req('/auth/redeem',{code,deviceToken:winningSecret}),env)).status,409);
 });
 test('expired, malformed and oversized activation rejected without storing devices',async()=>{
  const {env,req,storage}=setup(); const code='c'.repeat(64);
