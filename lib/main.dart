@@ -54,6 +54,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       if (mounted && active && !settingsOpen && !sleeping)
         setState(() {
           energy = level;
+          speechWord = '';
+          speechOffset = 0;
           mode = level > 0 ? FaceMode.speaking : FaceMode.listening;
         });
     },

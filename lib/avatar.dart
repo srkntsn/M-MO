@@ -138,7 +138,7 @@ class _BlenderAvatarState extends State<BlenderAvatar> {
           // Seek the Blender morph animation to a deterministic mouth pose.
           if(viewer.duration>0) {
             const blink=time%4.8;
-            viewer.currentTime=state.sleeping ? 25/24 : state.speaking ? .5*amount : blink>4.6 ? 1+(blink-4.6)/.2*.125 : 0;
+            viewer.currentTime=state.sleeping ? 25/24 : blink>4.6 ? 1+(blink-4.6)/.2*.125 : state.speaking ? .5*amount : 0;
           }
           viewer.cameraOrbit=`${Math.sin(time*.45)*3}deg ${90+Math.sin(time*.7)*1.2}deg 90%`;
         },90);
