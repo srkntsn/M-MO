@@ -15,8 +15,9 @@ export function normalizeDeploymentToken(value) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const raw = process.env.CF_TOKEN || '';
-    const token = normalizeDeploymentToken(raw);
     const account = (process.env.CF_ACCOUNT || '').trim();
+    if (raw.trim() === account && account) throw new Error('DIAGNOSIS: CLOUDFLARE_API_TOKEN contains exactly the CLOUDFLARE_ACCOUNT_ID value. Replace only the API_TOKEN secret with the generated token value, not the account ID.');
+    const token = normalizeDeploymentToken(raw);
     if (!/^[a-fA-F0-9]{32}$/.test(account)) throw new Error('Cloudflare account ID must contain 32 hexadecimal characters.');
     if (token === account) throw new Error('CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID contain the same value. An account ID cannot authenticate deployment. No secret value was printed.');
     if (!process.env.GITHUB_ENV) throw new Error('GitHub Actions environment file is missing.');
