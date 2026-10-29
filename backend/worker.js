@@ -1,3 +1,5 @@
+import {authorized, deviceRoutes} from './devices.js';
+export {DeviceRegistry} from './devices.js';
 // Existing GEMINI_API_KEY, MIMO_ACCESS_TOKEN and optional GEMINI_MODEL bindings are preserved.
 const MAX_BODY = 1500000;
 const PERSONA = `Sen MİMO'sun: sıcak, neşeli, esprili, meraklı bir Türkçe sanal arkadaş.
@@ -26,8 +28,11 @@ async function readBody(request) {
 
 export default {
   async fetch(request, env) {
+    const deviceResponse = await deviceRoutes(request, env);
+    if (deviceResponse) return deviceResponse;
+    if (new URL(request.url).pathname !== '/') return new Response('Not found', {status:404});
     if (request.method !== 'POST') return new Response('Not found', {status:404});
-    if (!env.MIMO_ACCESS_TOKEN || request.headers.get('Authorization') !== 'Bearer ' + env.MIMO_ACCESS_TOKEN) {
+    if (!(await authorized(request, env))) {
       return Response.json({error:'Unauthorized'}, {status:401});
     }
     if (Number(request.headers.get('content-length') || 0) > MAX_BODY) return Response.json({error:'Too large'}, {status:413});

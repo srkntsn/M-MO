@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const source=await readFile(new URL('./worker.js',import.meta.url),'utf8');
-const {default:worker}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const devices=await readFile(new URL('./devices.js',import.meta.url),'utf8');
+const moduleSource=source.replaceAll("'./devices.js'", "'data:text/javascript;base64,"+Buffer.from(devices).toString('base64')+"'");
+const {default:worker}=await import('data:text/javascript;base64,'+Buffer.from(moduleSource).toString('base64'));
 const env={MIMO_ACCESS_TOKEN:'test-access',GEMINI_API_KEY:'test-key'};
 const request=(body,headers={})=>new Request('https://worker.test/',{method:'POST',headers:{Authorization:'Bearer test-access','Content-Type':'application/json',...headers},body:JSON.stringify(body)});
 test('authentication before parsing; GET remains 404',async()=>{

@@ -25,7 +25,7 @@ jobs:
           channel: stable
           cache: true
       - name: Backend contract tests
-        run: node --test backend/worker.test.mjs
+        run: node --test backend/*.test.mjs
       - name: Generate Android project
         run: flutter create --platforms android --project-name mimo_ai --org com.mimoai .
       - name: Configure permissions
@@ -35,7 +35,7 @@ jobs:
       - name: Analyze application
         run: flutter analyze lib test
       - name: Verify face states
-        run: flutter test test/face_test.dart
+        run: flutter test
       # Test APK fallback. Cache eviction can change this key; use the repository
       # secret below for a durable identity across future builds.
       - name: Restore test signing identity

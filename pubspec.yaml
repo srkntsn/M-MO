@@ -1,7 +1,7 @@
 name: mimo_ai
 description: MIMO - sesli, kamerali, 3D sanal arkadas
 publish_to: none
-version: 0.4.0+4
+version: 0.5.0+5
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:
@@ -13,6 +13,10 @@ dependencies:
   package_info_plus: ^8.3.1
   camera: ^0.11.2
   url_launcher: ^6.3.2
+  app_links: ^6.4.1
+  flutter_secure_storage: ^9.2.4
+  permission_handler: ^12.0.1
+  image: ^4.5.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
