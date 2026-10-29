@@ -14,11 +14,17 @@ jobs:
       - name: Install Blender
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y blender
+          sudo apt-get install -y blender python3-numpy
       - name: Render portrait and export mobile model
-        run: blender -b -t 2 -P scripts/create_avatar.py -- --output avatar-build
+        run: |
+          blender -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output avatar-build
+          test -s avatar-build/mimo-head.glb
+          test -s avatar-build/mimo-head.blend
+          test -s avatar-build/mimo-portrait.png
+          test -s avatar-build/mimo-speaking.png
       - uses: actions/upload-artifact@v4
         with:
           name: mimo-blender-avatar
           path: avatar-build/
           retention-days: 30
+          if-no-files-found: error
