@@ -16,3 +16,5 @@ web/
 __pycache__/
 avatar-build/
 assets/avatar/*.glb
+
+assets/avatar/*.png

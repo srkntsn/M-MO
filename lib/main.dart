@@ -19,6 +19,7 @@ import 'avatar.dart';
 import 'neural_voice.dart';
 import 'updater.dart';
 import 'providers.dart';
+import 'recognition_turn.dart';
 
 final appLinks = AppLinks();
 
@@ -66,13 +67,17 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       busy = false,
       speechReady = false,
       starting = false;
-  bool microphoneBlocked = false;
+  bool microphoneBlocked = false, preparingSpeech = false;
   int generation = 0, listenId = 0, failures = 0;
-  Timer? restart, settle, watchdog;
+  Timer? restart, settle, watchdog, listeningHealth;
+  final recognitionTurn = RecognitionTurn();
+  DateTime lastListenRequest = DateTime.fromMillisecondsSinceEpoch(0);
+  bool cloudVoice = false;
   HttpClient? inFlight;
   CameraController? camera;
   String heard = '';
   String speechWord = '';
+  int speechOffset = 0;
   bool get canListen =>
       mounted &&
       active &&
@@ -101,11 +106,21 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         display(FaceMode.error);
       },
     );
+    listeningHealth = Timer.periodic(const Duration(milliseconds: 800), (_) {
+      if (!canListen ||
+          starting ||
+          speech.isListening ||
+          (settle?.isActive ?? false) ||
+          (restart?.isActive ?? false)) return;
+      if (DateTime.now().difference(lastListenRequest).inMilliseconds > 1000)
+        schedule();
+    });
     boot();
   }
 
   Future<void> boot() async {
     final prefs = await SharedPreferences.getInstance();
+    cloudVoice = prefs.getBool('cloud_voice') ?? false;
     endpoint = prefs.getString('endpoint') ?? '';
     token = prefs.getString('access') ?? '';
     final credential = await inviteAccess.load();
@@ -154,6 +169,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
       if (mounted && mode == FaceMode.speaking)
         setState(() {
           speechWord = word;
+          speechOffset = start;
           energy = .5 + (word.length % 5) / 10;
         });
     });
@@ -182,44 +198,66 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   }
 
   Future<void> prepareSpeech() async {
-    if (!(await Permission.microphone.isGranted)) {
-      microphoneBlocked = true;
-      speechReady = false;
-      display(FaceMode.error);
-      return;
-    }
+    if (preparingSpeech) return;
+    preparingSpeech = true;
     try {
-      speechReady = await speech.initialize(
-        onError: (e) {
-          if (!mounted || !active || settingsOpen || busy) return;
-          if (e.errorMsg.contains('permission') ||
-              e.errorMsg.contains('not_available')) {
-            microphoneBlocked = true;
-            display(FaceMode.error);
-          } else {
-            if (!e.errorMsg.contains('no_match') &&
-                !e.errorMsg.contains('speech_timeout')) failures++;
-            schedule();
-          }
-        },
-        onStatus: (status) {
-          if (!mounted || !active || settingsOpen || busy) return;
-          if (status == 'done' || status == 'notListening') {
-            final session = listenId;
-            settle?.cancel();
-            settle = Timer(
-              const Duration(milliseconds: 450),
-              () => consume(session),
-            );
-          }
-        },
-      );
-      microphoneBlocked = !speechReady;
-    } catch (_) {
-      speechReady = false;
-      microphoneBlocked = true;
+      if (!(await Permission.microphone.isGranted)) {
+        microphoneBlocked = true;
+        speechReady = false;
+        display(FaceMode.error);
+        return;
+      }
+      try {
+        speechReady = await speech.initialize(
+          onError: (e) {
+            if (!mounted || !active || settingsOpen || busy) return;
+            if (e.errorMsg.contains('permission')) {
+              microphoneBlocked = true;
+              display(FaceMode.error);
+            } else if (e.errorMsg.contains('not_available')) {
+              speechReady = false;
+              recoverSpeech();
+            } else {
+              if (!e.errorMsg.contains('no_match') &&
+                  !e.errorMsg.contains('speech_timeout')) failures++;
+              finishRecognition();
+            }
+          },
+          onStatus: (status) {
+            if (!mounted || !active || settingsOpen || busy) return;
+            if (status == 'done' || status == 'notListening')
+              finishRecognition();
+          },
+        );
+        microphoneBlocked = false;
+      } catch (_) {
+        speechReady = false;
+      }
+      if (!speechReady && !microphoneBlocked) recoverSpeech();
+      if (microphoneBlocked) display(FaceMode.error);
+    } finally {
+      preparingSpeech = false;
     }
-    if (microphoneBlocked) display(FaceMode.error);
+  }
+
+  void recoverSpeech() {
+    if (!mounted || !active || settingsOpen || sleeping || microphoneBlocked)
+      return;
+    restart?.cancel();
+    restart = Timer(const Duration(seconds: 3), resumeListening);
+  }
+
+  void finishRecognition() {
+    if (!canListen) return;
+    if (settle?.isActive ?? false) return;
+    final session = listenId;
+    settle = Timer(const Duration(milliseconds: 650), () => consume(session));
+  }
+
+  Future<void> stopRecognition() async {
+    try {
+      await speech.cancel().timeout(const Duration(seconds: 2));
+    } catch (_) {/* A stalled platform call must not hold the conversation. */}
   }
 
   void schedule() {
@@ -232,37 +270,44 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
   Future<void> listen() async {
     if (!canListen || speech.isListening || starting) return;
     starting = true;
-    final session = ++listenId;
+    final session = recognitionTurn.begin();
+    listenId = session;
+    lastListenRequest = DateTime.now();
     heard = '';
     try {
       display(FaceMode.listening);
-      await speech.listen(
-        listenOptions: stt.SpeechListenOptions(
-          localeId: 'tr_TR',
-          listenFor: const Duration(seconds: 30),
-          pauseFor: const Duration(seconds: 2),
-          partialResults: true,
-          cancelOnError: false,
-          listenMode: stt.ListenMode.dictation,
-        ),
-        onSoundLevelChange: (level) {
-          if (mounted && mode == FaceMode.listening)
-            setState(() => energy = ((level + 2) / 12).clamp(0.0, 1.0));
-        },
-        onResult: (r) {
-          if (!canListen || session != listenId) return;
-          heard = r.recognizedWords;
-          if (r.finalResult) consume(session);
-        },
-      );
+      await speech
+          .listen(
+            listenOptions: stt.SpeechListenOptions(
+              localeId: 'tr_TR',
+              listenFor: const Duration(seconds: 30),
+              pauseFor: const Duration(seconds: 2),
+              partialResults: true,
+              cancelOnError: false,
+              listenMode: stt.ListenMode.dictation,
+            ),
+            onSoundLevelChange: (level) {
+              if (mounted && mode == FaceMode.listening)
+                setState(() => energy = ((level + 2) / 12).clamp(0.0, 1.0));
+            },
+            onResult: (r) {
+              if (!canListen || session != listenId) return;
+              heard = r.recognizedWords;
+              recognitionTurn.update(session, heard);
+              if (r.finalResult) consume(session);
+            },
+          )
+          .timeout(const Duration(seconds: 4));
       if (!canListen || session != listenId) {
-        await speech.cancel();
+        await stopRecognition();
         return;
       }
       watchdog?.cancel();
       watchdog = Timer(const Duration(seconds: 34), () async {
         if (session != listenId || !canListen) return;
-        await speech.stop();
+        try {
+          await speech.stop().timeout(const Duration(seconds: 2));
+        } catch (_) {}
         consume(session);
       });
       if (!speech.isListening) schedule();
@@ -278,20 +323,19 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     if (!canListen || session != listenId) return;
     settle?.cancel();
     watchdog?.cancel();
-    final text = heard.trim();
+    final text = recognitionTurn.take(session);
     heard = '';
-    if (text.isEmpty) {
+    if (text == null) {
       schedule();
       return;
     }
-    listenId++;
     failures = 0;
-    respond(text);
+    unawaited(respond(text));
   }
 
   Future<void> say(String text) async {
     if (!mounted || !active || settingsOpen) return;
-    await speech.cancel();
+    await stopRecognition();
     if (!mounted || !active || settingsOpen) return;
     final spokenGeneration = generation;
     speechWord = '';
@@ -299,14 +343,16 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     display(FaceMode.speaking);
     try {
       final server = Uri.tryParse(endpoint);
-      if (server != null && token.isNotEmpty) {
+      if (cloudVoice && server != null && token.isNotEmpty) {
         final played = await neuralVoice.speak(server, token, text, (level) {
           if (valid(spokenGeneration) && mode == FaceMode.speaking)
             setState(() => energy = level);
         });
         if (!valid(spokenGeneration) || played) return;
       }
-      await tts.speak(text).timeout(const Duration(seconds: 65));
+      final speechLimit =
+          Duration(seconds: (text.length / 10 + 5).ceil().clamp(6, 55));
+      await tts.speak(text).timeout(speechLimit);
     } catch (_) {
       await tts.stop();
     } finally {
@@ -417,7 +463,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
         ),
       );
       final response = await request.close().timeout(
-            const Duration(seconds: 55),
+            const Duration(seconds: 32),
           );
       final body = await utf8.decoder
           .bind(response)
@@ -467,7 +513,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     restart?.cancel();
     settle?.cancel();
     watchdog?.cancel();
-    await speech.cancel();
+    await stopRecognition();
     try {
       if (!valid(id)) return;
       final q = normalize(message);
@@ -576,7 +622,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     settle?.cancel();
     watchdog?.cancel();
     inFlight?.close(force: true);
-    await speech.cancel();
+    await stopRecognition();
     await tts.stop();
     await neuralVoice.stop();
     if (!mounted) return;
@@ -643,7 +689,8 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
 
   Future<void> interrupt() async {
     generation++;
-    listenId++;
+    recognitionTurn.cancel();
+    listenId = recognitionTurn.session;
     busy = false;
     heard = '';
     sleeping = false;
@@ -652,7 +699,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     watchdog?.cancel();
     inFlight?.close(force: true);
     customAI?.cancel();
-    await speech.cancel();
+    await stopRecognition();
     await tts.stop();
     await neuralVoice.stop();
     if (!mounted || !active || settingsOpen) return;
@@ -777,7 +824,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     settle?.cancel();
     watchdog?.cancel();
     inFlight?.close(force: true);
-    await speech.cancel();
+    await stopRecognition();
     await tts.stop();
     await neuralVoice.stop();
     if (!mounted) return;
@@ -1024,7 +1071,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     restart?.cancel();
     settle?.cancel();
     watchdog?.cancel();
-    await speech.cancel();
+    await stopRecognition();
     await tts.stop();
     await neuralVoice.stop();
     customAI?.cancel();
@@ -1047,6 +1094,17 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
                   'Normal ekranda yalnızca yüzüm var. Ayarlara yüzüme uzun basarak dönersin. Mikrofon yalnızca uygulama açıkken dinler. “Kameraya bak” dediğinde tek kare Gemini’ye gönderilir; fotoğraf cihazda saklanmaz. Son 6 konuşma cihazda tutulur; “geçmişi unut” diyerek silebilirsin.',
                 ),
                 const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Bulut sesi'),
+                  subtitle: const Text(
+                      'Kapalıyken telefonun sesiyle daha hızlı yanıt verir. Bulut sesi bağlantıya göre bekletebilir.'),
+                  value: cloudVoice,
+                  onChanged: (value) async {
+                    refresh(() => cloudVoice = value);
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setBool('cloud_voice', value);
+                  },
+                ),
                 TextField(
                   controller: url,
                   keyboardType: TextInputType.url,
@@ -1147,6 +1205,7 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
     restart?.cancel();
     settle?.cancel();
     watchdog?.cancel();
+    listeningHealth?.cancel();
     speech.cancel();
     tts.stop();
     neuralVoice.dispose();
@@ -1177,7 +1236,11 @@ class _MimoHomeState extends State<MimoHome> with WidgetsBindingObserver {
             onTap: interrupt,
             onLongPress: openSettings,
             child: BlenderAvatar(
-                mode: mode, energy: energy, mood: mood, word: speechWord),
+                mode: mode,
+                energy: energy,
+                mood: mood,
+                word: speechWord,
+                wordOffset: speechOffset),
           ),
         ),
       );

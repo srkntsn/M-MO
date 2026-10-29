@@ -23,20 +23,19 @@ class NeuralVoice {
     StreamSubscription<void>? activeEnded;
     StreamSubscription<Duration>? activePositions;
     Timer? activeEnvelope;
-    var started = false;
     try {
       final req = await activeClient
           .postUrl(server.resolve('/speech'))
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 5));
       req.followRedirects = false;
       req.headers.contentType = ContentType.json;
       req.headers.set('Authorization', 'Bearer $token');
       req.add(utf8.encode(jsonEncode({'text': text})));
-      final response = await req.close().timeout(const Duration(seconds: 16));
+      final response = await req.close().timeout(const Duration(seconds: 5));
       if (response.statusCode != 200 || id != generation) return false;
       final data = BytesBuilder();
       var size = 0;
-      await for (final part in response.timeout(const Duration(seconds: 6))) {
+      await for (final part in response.timeout(const Duration(seconds: 5))) {
         size += part.length;
         if (size > 5000000) throw const FormatException('Audio too large');
         data.add(part);
@@ -48,6 +47,8 @@ class NeuralVoice {
       completion = done;
       ended = player.onPlayerComplete.listen((_) {
         if (!done.isCompleted) done.complete();
+      }, onError: (Object error) {
+        if (!done.isCompleted) done.completeError(error);
       });
       activeEnded = ended;
       final watch = Stopwatch();
@@ -62,7 +63,6 @@ class NeuralVoice {
         await player.stop();
         return true;
       }
-      started = true;
       watch.start();
       envelope = Timer.periodic(const Duration(milliseconds: 40), (_) {
         if (id != generation || levels.isEmpty) return;
@@ -71,10 +71,13 @@ class NeuralVoice {
         onEnergy(levels[index]);
       });
       activeEnvelope = envelope;
-      await done.future.timeout(const Duration(seconds: 70));
+      final duration = Duration(
+          milliseconds: (levels.length * 40 + 3000).clamp(3000, 60000));
+      await done.future.timeout(duration);
       return true;
     } catch (_) {
-      return started;
+      if (id == generation) await player.stop();
+      return false;
     } finally {
       activeClient.close(force: true);
       if (identical(client, activeClient)) client = null;

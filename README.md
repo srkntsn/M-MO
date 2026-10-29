@@ -1,6 +1,6 @@
-# MİMO · 0.4
+# MİMO · 0.6
 
-Türkçe sesli sanal arkadaş. Normal ekranda yalnızca perspektifle çizilen, ışıklandırılmış bir 3D robot yüzü görünür. Model ve animasyonlar cihazda çalışır; dışarıdan 3D dosya indirmez.
+Türkçe sesli sanal arkadaş. Normal ekranda yalnızca perspektifle çizilen, ışıklandırılmış geniş hatlı, insana benzeyen bir 3D yüz görünür. Model ve animasyonlar cihazda çalışır; dışarıdan 3D dosya indirmez.
 
 ## Kullanım
 
@@ -12,7 +12,13 @@ Türkçe sesli sanal arkadaş. Normal ekranda yalnızca perspektifle çizilen, �
 - “Geçmişi unut”: cihazda saklanan son 6 konuşmayı sil. Görüntüler geçmişte saklanmaz.
 - “Güncelleme var mı?”: yeni APK kontrolü. “Yeni sürümü aç”: indirme sayfası.
 
-Mikrofon/kamera yalnızca uygulama ön plandayken kullanılır. Android’in izin pencereleri ilk kullanımda görünür. Dinleme ile seslendirme sırayla çalışır: bu sürüm tam çift yönlü canlı ses/video değildir. Ağız hareketi TTS ilerlemesi ve hece benzeri animasyondur; fonem hassasiyetinde dudak eşleme değildir. 3D yüz bir robot kafasıdır, fotogerçekçi insan avatarı değildir.
+Mikrofon/kamera yalnızca uygulama ön plandayken kullanılır. Android’in izin pencereleri ilk kullanımda görünür. Dinleme ile seslendirme sırayla çalışır: bu sürüm tam çift yönlü canlı ses/video değildir. Ağız hareketi TTS ilerlemesi ve hece benzeri animasyondur; fonem hassasiyetinde dudak eşleme değildir. Yüz gerçek anatomik baş topolojisine dayanır; stilize bir karakterdir. Modelden alınan Cycles render’ları sürüm dosyalarında yer alır. Fotogerçekçi insan veya tam fonem senkronizasyonu iddiası değildir.
+
+## Ses akışı ve model
+
+Varsayılan cihaz sesi yanıtı ikinci bir bulut ses isteğini beklemeden okur. Yüze uzun basılan ayarlardaki **Bulut sesi** seçeneği isteğe bağlıdır. Dinleme oturumları, geciken/çift sonuçlar ve geçici tanıma hataları için toparlanma kontrolü vardır. Fiziksel Android testi gereklidir.
+
+`scripts/create_avatar.py`, `assets/source/human-head.obj` (MakeHuman CC0 temelinden çıkarılmış baş geometrisi) üzerinden Blender modeli, mobil glTF ve Cycles portrelerini üretir. CC0 metni aynı klasördedir. `scripts/validate_avatar.py` dışa aktarılan dosyadaki çene/göz kapağı hareketlerini kontrol eder. Blender 4.3.2 ve Flutter 3.47.8 derlemede sabitlenmiştir.
 
 ## Kolay güncelleme
 
@@ -41,8 +47,8 @@ Tekrarlayan kopyalamayı kaldırmak için deponun Actions Secrets alanında `CLO
 ```
 flutter pub get
 flutter analyze lib test
-flutter test test/face_test.dart
-node --test backend/worker.test.mjs
+flutter test
+node --test backend/*.test.mjs
 ```
 
 Fiziksel telefonda: sessizlikten sonra yeniden dinleme, mikrofon izni reddi, arka plana alıp dönme, konuşmayı dokunarak kesme, kamera izni reddi, kamera kare analizi ve aynı imzayla güncelleme ayrıca denenmelidir. Birim/render testleri mikrofon veya kamera donanımını doğrulamaz.

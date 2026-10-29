@@ -1,14 +1,13 @@
-MİMO 0.5 — Android test adayı
+MİMO 0.6 — geniş insan yüzü ve daha dayanıklı sesli sohbet (Android test sürümü)
 
-- Açılışta mikrofon ve kamera izinlerini açıklayan ekran.
-- Sesle ön/arka kamera seçimi; iki kamerada fotoğraf küçültme ve sıkıştırma, boyut hatasında tekrar döngüsünün durdurulması.
-- Dinlemeye dönüş gecikmesinin azaltılması.
-- Blender ile üretilmiş insansı seramik android başı, ses enerjisiyle hareket eden ayrı dudaklar.
-- Sunucu üzerinden Türkçe ses üretimi; başarısızlıkta cihaz sesi yedeği.
-- İki kişilik test için tek cihaz daveti, cihaz erişimini iptal etme.
-- Gelişmiş ayarlarda isteğe bağlı Gemini/OpenAI/Claude API hesabı; varsayılan hazır MİMO hizmeti.
-- “Güncelle” komutuyla indirme, dosya ve imza doğrulaması, Android kurulum onayı. Play kurulumlarında Play güncelleme yolu.
+- MakeHuman'ın CC0 anatomik baş temelinden düzenlenmiş geniş yüz: gerçek burun, yanak, çene, göz kapakları ve dudak topolojisi; ayrı göz, iris, dil ve üst-alt diş geometrisi.
+- Blender 4.3.2 ile aynı modelden alınan gerçek Cycles render’ları indirmelere eklendi. Uygulama içindeki glTF modeli hareketlidir; bu bir fotogerçekçi insan veya tam fonem senkronizasyonu iddiası değildir.
+- Çene ve göz kapağı hareketlerinin mobil dışa aktarmada kaybolmasını engelleyen model doğrulaması.
+- Model yüklenirken boş ekran yerine gerçek render; yüzün JavaScript güncellemelerinde birikmeyi önleyen sınırlandırma.
+- Varsayılan hızlı cihaz sesi. Yüze uzun basılan ayarlarda Bulut sesi isteğe bağlıdır; başarısız/geciken ses üretimi ve oynatımı sınırlanır ve cihaz sesine dönülür.
+- Sessizlikten sonra dinlemeyi yeniden başlatan kontrol; geç gelen/eski ve çift sonuçların ayıklanması; geçici ses hizmeti hatasından toparlanma.
+- Eksik Gemini modeli için başarılı alternatif seçimi 30 dakika bellekte tutulur; her konuşmada katalog isteği tekrarlanmaz. Backend güncellemesi gerektirir; mevcut Secrets değiştirilmez.
 
-Bu test adayı yeni Worker dağıtımını gerektirir. backend dizininin tamamı Wrangler ile dağıtılmalıdır; eski erişim ve Gemini Secrets korunur. Ayrıntılar TEST_UPGRADE.md dosyasındadır.
+Mevcut uygulamayı kaldırmayın: aynı imzalı APK’yı üzerine kurun. Uygulama içindeki “güncelle” komutu da kullanılabilir. İmza uyuşmazlığı varsa ayarları yedeklemeden uygulamayı kaldırmayın.
 
-Fiziksel cihaz ve canlı sağlayıcı testleri henüz doğrulanmamıştır. Bu APK bir mağaza yayını, fotogerçekçi yüz veya milyonlarca eşzamanlı kullanıcı kapasitesi beyanı değildir. Test imzasının korunması için aynı önbellek/kalıcı keystore kullanılmalıdır; uygulamayı kaldırmak ayarları siler.
+Derleme, analiz, birim ve dışa aktarma kontrolleri gerçek telefondaki mikrofon/kamera testinin yerine geçmez. Android’in ses tanıması kısa oturumlarla çalışır; bu sürüm tam çift yönlü canlı ses değildir. Gemini’nin ağ/kota/model koşulları geçerlidir.

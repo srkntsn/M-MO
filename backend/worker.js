@@ -3,6 +3,9 @@ import {speechResponse} from './speech.js';
 export {DeviceRegistry} from './devices.js';
 // Existing GEMINI_API_KEY, MIMO_ACCESS_TOKEN and optional GEMINI_MODEL bindings are preserved.
 const MAX_BODY = 1500000;
+// Per-isolate cache prevents a missing configured model from requiring a
+// catalog request on every spoken turn. No API keys or conversations are cached.
+let resolvedModel = null;
 const PERSONA = `Sen MİMO'sun: sıcak, neşeli, esprili, meraklı bir Türkçe sanal arkadaş.
 Sesli konuşuyorsun; çoğunlukla 1-3 kısa cümle kur, liste/Markdown/emoji kullanma. Sohbetin ritmine uy.
 Kullanıcının anlattığı somut ayrıntılara dön; aynı selamı veya aynı soruyu tekrarlama. Her yanıtta soru sorma.
@@ -67,7 +70,7 @@ export default {
         generationConfig:{maxOutputTokens:400,temperature:0.85}})
     });
     try {
-      let chosenModel = model;
+      let chosenModel = resolvedModel?.source === model && resolvedModel.until > Date.now() ? resolvedModel.id : model;
       let ai = await callModel(chosenModel);
       if (ai.status === 404) {
         const listing = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
@@ -81,7 +84,10 @@ export default {
           const preferred = candidates.find(x=>/flash-lite/i.test(x.name||'')) || candidates.find(x=>/flash/i.test(x.name||'')) || candidates[0];
           if (preferred) {
             chosenModel = preferred.name.replace(/^models\//,'');
-            if (chosenModel !== model) ai = await callModel(chosenModel);
+            if (chosenModel !== model) {
+              ai = await callModel(chosenModel);
+              if (ai.ok) resolvedModel = {source:model,id:chosenModel,until:Date.now()+30*60*1000};
+            }
           }
         }
       }

@@ -2,7 +2,7 @@ name: MIMO Blender avatar
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['scripts/create_avatar.py', '.github/workflows/render-avatar.yml']
+    paths: ['scripts/create_avatar.py', 'assets/source/**', '.github/workflows/render-avatar.yml']
 permissions:
   contents: read
 jobs:
@@ -13,11 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Blender
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y blender python3-numpy
+          curl -fsSL https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz -o "$RUNNER_TEMP/blender.tar.xz"
+          tar --no-same-owner -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP"
       - name: Render portrait and export mobile model
         run: |
-          blender -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output avatar-build
+          "$RUNNER_TEMP/blender-4.3.2-linux-x64/blender" -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output avatar-build
+          python3 scripts/validate_avatar.py avatar-build/mimo-head.glb
           test -s avatar-build/mimo-head.glb
           test -s avatar-build/mimo-head.blend
           test -s avatar-build/mimo-portrait.png

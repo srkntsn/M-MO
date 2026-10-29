@@ -52,3 +52,20 @@ test('404 selects an accessible model; upstream failures are sanitized',async()=
   assert.equal(JSON.stringify(body).includes('private detail'),false);
  } finally {globalThis.fetch=original;}
 });
+
+test('successful model fallback is reused on the next conversation turn',async()=>{
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(url)=>{
+  calls++;
+  if(calls===1)return Response.json({error:{status:'NOT_FOUND'}},{status:404});
+  if(calls===2)return Response.json({models:[{name:'models/gemini-fast-flash',supportedGenerationMethods:['generateContent']}]});
+  assert.ok(url.includes('gemini-fast-flash'));
+  return Response.json({candidates:[{content:{parts:[{text:'Merhaba.'}]}}]});
+ };
+ try {
+  assert.equal((await worker.fetch(request({message:'İlk tur'}),env)).status,200);
+  assert.equal(calls,3);
+  assert.equal((await worker.fetch(request({message:'İkinci tur'}),env)).status,200);
+  assert.equal(calls,4);
+ }finally{globalThis.fetch=original;}
+});

@@ -1,7 +1,7 @@
 name: mimo_ai
 description: MIMO - sesli, kamerali, 3D sanal arkadas
 publish_to: none
-version: 0.5.0+5
+version: 0.6.0+6
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:
@@ -31,3 +31,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/avatar/mimo-head.glb
+    - assets/avatar/mimo-portrait.png

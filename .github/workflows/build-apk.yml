@@ -22,6 +22,7 @@ jobs:
           node-version: '22'
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       - name: Backend contract tests
@@ -32,9 +33,10 @@ jobs:
         run: python3 scripts/configure_android.py
       - name: Build Blender avatar asset
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y blender python3-numpy
-          blender -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output assets/avatar --export-only
+          curl -fsSL https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz -o "$RUNNER_TEMP/blender.tar.xz"
+          tar --no-same-owner -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/blender-4.3.2-linux-x64/blender" -b -t 2 --python-exit-code 1 -P scripts/create_avatar.py -- --output assets/avatar
+          python3 scripts/validate_avatar.py assets/avatar/mimo-head.glb
           test -s assets/avatar/mimo-head.glb
       - name: Install dependencies
         run: flutter pub get
@@ -76,4 +78,4 @@ jobs:
           VERSION=$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)
           TAG="v${VERSION}-build.${{ github.run_number }}"
           cp build/app/outputs/flutter-apk/app-debug.apk mimo-ai.apk
-          gh release create "$TAG" mimo-ai.apk --target "$GITHUB_SHA" --title "MİMO ${VERSION} · ${{ github.run_number }}" --notes-file RELEASE_NOTES.md
+          gh release create "$TAG" mimo-ai.apk assets/avatar/mimo-portrait.png assets/avatar/mimo-speaking.png --target "$GITHUB_SHA" --title "MİMO ${VERSION} · ${{ github.run_number }}" --notes-file RELEASE_NOTES.md
