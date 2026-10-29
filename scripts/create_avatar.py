@@ -87,7 +87,7 @@ bpy.ops.object.select_all(action='DESELECT');scalp.select_set(True);bpy.context.
 sub=scalp.modifiers.new('Soft hairline','SUBSURF');sub.levels=2;bpy.ops.object.modifier_apply(modifier=sub.name)
 surface=BVHTree.FromPolygons([v.co for v in head.data.vertices],[list(f.vertices) for f in head.data.polygons])
 roots=[v.co.copy() for v in scalpmesh.vertices]
-strands=bpy.data.curves.new('Fine swept strands','CURVE');strands.dimensions='3D';strands.bevel_depth=.00032;strands.bevel_resolution=1;strands.resolution_u=3
+strands=bpy.data.curves.new('Fine swept strands','CURVE');strands.dimensions='3D';strands.bevel_depth=.00032;strands.bevel_resolution=0;strands.resolution_u=2
 for i in range(1400):
  root=random.choice(roots);length=random.uniform(.012,.028)
  tangent=Vector((-.25*length,length,0))

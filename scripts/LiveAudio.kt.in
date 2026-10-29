@@ -92,8 +92,8 @@ class LiveAudio(private val context: Context, messenger: BinaryMessenger) {
         val inputSize = maxOf(3200, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT))
         val r = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, inputSize)
         record = r; check(r.state == AudioRecord.STATE_INITIALIZED) { "Recorder unavailable" }
-        if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(r.audioSessionId)?.also { it.enabled = true }
-        if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(r.audioSessionId)?.also { it.enabled = true }
+        try { if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(r.audioSessionId)?.also { it.enabled = true } } catch (_: RuntimeException) { echo = null }
+        try { if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(r.audioSessionId)?.also { it.enabled = true } } catch (_: RuntimeException) { noise = null }
         val format = AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
         val outputSize = maxOf(4800, AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT))
         val t = AudioTrack.Builder().setAudioAttributes(attributes).setAudioFormat(format).setBufferSizeInBytes(outputSize).setTransferMode(AudioTrack.MODE_STREAM).build()
